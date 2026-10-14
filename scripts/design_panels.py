@@ -4,7 +4,8 @@ Usage:
   python scripts/design_panels.py eth3d/terrace
   python scripts/design_panels.py eth3d/terrace --tilt 15 --latitude 47.4 --facing-deg -90
   python scripts/design_panels.py south_building --unit-scale 2.1 --select highest
-Cloud is assumed metric unless --unit-scale (metres per cloud unit) is given.
+Cloud is assumed metric unless --unit-scale (metres per cloud unit) is given;
+--unit-scale tags reads the AprilTag scale from scripts/tag_scale.py.
 --facing-deg is the direction the panels face (towards the equator), measured in the
 roof's 2D frame (0 = +u axis). Without a north reference in the scan, set it by eye
 from panels_plan.png or from a compass bearing taken on site.
@@ -150,7 +151,8 @@ def run(site, unit_scale=1.0, voxel=0.05, roof_index=None, select="largest", max
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("site")
-    ap.add_argument("--unit-scale", type=float, default=1.0, help="metres per cloud unit")
+    ap.add_argument("--unit-scale", default="1.0",
+                    help="metres per cloud unit, or 'tags' to use outputs/<site>/tag_scale.json")
     ap.add_argument("--voxel", type=float, default=0.05)
     ap.add_argument("--select", choices=["largest", "highest"], default="largest")
     ap.add_argument("--roof-index", type=int, default=None, help="override --select")
@@ -163,7 +165,13 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if a.tilt > 0 and a.latitude is None:
         ap.error("--tilt needs --latitude (for winter-noon row spacing)")
-    s = run(a.site, unit_scale=a.unit_scale, voxel=a.voxel, roof_index=a.roof_index,
+    if a.unit_scale == "tags":
+        from tag_scale import load_scale
+        unit_scale = load_scale(a.site, ROOT)
+        print(f"unit scale from AprilTags: {unit_scale:.6f} m per unit")
+    else:
+        unit_scale = float(a.unit_scale)
+    s = run(a.site, unit_scale=unit_scale, voxel=a.voxel, roof_index=a.roof_index,
             select=a.select, max_tilt=a.max_tilt, setback=a.setback, watt_per_panel=a.watt,
             tilt=a.tilt, facing_deg=a.facing_deg, latitude=a.latitude)
     print(json.dumps({k: v for k, v in s.items() if k not in ("files", "transform")}, indent=2))

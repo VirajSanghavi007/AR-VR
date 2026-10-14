@@ -22,7 +22,7 @@ photorealism: a clean roof plane beats a million-triangle mesh.
 1. Capture photos + independent tape/laser measurements (length, width, a diagonal).
 2. COLMAP: camera poses (sparse). Dense: OpenMVS (tools/openmvs), since COLMAP 4.2.1 patch_match_stereo crashes (0xC0000409) on this RTX 5050.
 3. Open3D (Python 3.11 venv): downsample, outlier removal, RANSAC plane fitting.
-4. Scale + align: photogrammetry scale is arbitrary until set from known dimensions.
+4. Scale + align: photogrammetry scale is arbitrary until set from known dimensions: AprilTags (rooftop/tags.py, scripts/make_tags.py + tag_scale.py, 36h11, 160 mm default) or a tape length.
 5. CadQuery (OpenCascade, in the venv) builds solids, exports STEP; ezdxf exports DXF. Opened in AutoCAD (user has AutoCAD, NOT FreeCAD).
 6. Validate against independent measurements (dimension, edge, obstacle error separately).
 
@@ -35,7 +35,8 @@ data/<site>/colmap/          COLMAP project
 outputs/<site>/              cleaned clouds, previews, .step, .dxf
 rooftop/                     library: cloud.py (Open3D), cad.py (CadQuery/ezdxf)
 rooftop/geometry.py, layout.py, panels.py, ar_export.py, validate.py: levelling, outline/keep-outs/(tilted) panel grid, STEP/PLY/PNG/GLB export, laser-scan validation
-scripts/                     inspect_cloud.py, export_cad.py, design_panels.py, validate_eth3d.py (CLIs)
+scripts/                     inspect_cloud.py, export_cad.py, design_panels.py, validate_eth3d.py, make_tags.py, tag_scale.py (CLIs)
+preview/                     web 3D/AR preview (GitHub Pages): index.html, ar.html (WebXR corner-tap live layout), roofgrid.js, placement.js
 tools/openmvs/               OpenMVS 2.4.0 (DensifyPointCloud, Viewer.exe = .ply handler)
 data/eth3d/{terrace,facade}/ ETH3D with metric poses + laser scans (ground truth)
 tests/                       pytest, run with .venv\Scripts\python -m pytest

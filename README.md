@@ -66,3 +66,19 @@ ETH3D terrace dense cloud: `colmap image_undistorter` on `dslr_calibration_jpg` 
   panels (1.722 x 1.134 m, never scaled; count follows the roof), tilt slider 0-90 deg with winter-shadow row
   gaps from the latitude. HUD shows panel count, kWp, measured side lengths and area.
   Desktop check without a phone: open `ar.html` and run `__solar.simulate(corners, obstacles)` in the console; `__solar.tap([x,y,z])` / `press(id)` drive the tap flow.
+
+## AprilTags for real-world scale
+
+Photos alone give a model with arbitrary size. Tags of known size fix that without a tape.
+
+1. `.venv\Scripts\python scripts\make_tags.py` writes `outputs/apriltags_36h11_160mm.pdf` (ids 0-3, one per A4 page).
+   Print at 100 % / Actual size; the black square must measure 160 mm (check the 100 mm line).
+2. Lay 2-4 tags flat on the roof, spread out, each fully visible in several photos. Take the photos as usual.
+3. Run COLMAP (sparse model), then
+   `.venv\Scripts\python scripts\tag_scale.py rooftop_01 --tag-size 0.16`
+   -> `outputs/rooftop_01/tag_scale.json`: metres per model unit, how well the tags agree (%), and
+   tag-to-tag distances to spot-check with a tape.
+4. `.venv\Scripts\python scripts\design_panels.py rooftop_01 --unit-scale tags`
+
+Camera models: PINHOLE, SIMPLE_PINHOLE, SIMPLE_RADIAL, RADIAL, OPENCV, FULL_OPENCV, OPENCV_FISHEYE
+(others: run `colmap image_undistorter` first). Text or binary COLMAP models.
