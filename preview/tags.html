@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AprilTag Check</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Two checks for printed AprilTags: live camera (quick) and the actual photo set (authoritative). */
+:root {
+  --bg: #eef1f4; --surface: #ffffff; --fg: #16202b; --muted: #5b6876; --line: #d5dce3;
+  --accent: #1d3f8f; --accent-fg: #ffffff; --ok: #1f7a4d; --warn: #a15c00; --bad: #b42318;
+  --stage: #dfe5eb;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f151c; --surface: #17202a; --fg: #e6ecf2; --muted: #93a1b0; --line: #2a3644;
+  --accent: #7ea2ff; --accent-fg: #0b1220; --ok: #5ccf94; --warn: #f0b45a; --bad: #ff8a80;
+  --stage: #1c2733; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f151c; --surface: #17202a; --fg: #e6ecf2; --muted: #93a1b0; --line: #2a3644;
+  --accent: #7ea2ff; --accent-fg: #0b1220; --ok: #5ccf94; --warn: #f0b45a; --bad: #ff8a80;
+  --stage: #1c2733; color-scheme: dark }
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 var(--sans); }
+.wrap { max-width: 960px; margin: 0 auto; padding: 20px 16px 32px; display: flex; flex-direction: column; gap: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
+h1 { font-size: 1.4rem; font-weight: 600; margin: 0; }
+a { color: var(--accent); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+.label { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 6px; }
+p { margin: 0 0 8px; }
+p:last-child { margin-bottom: 0; }
+.muted { color: var(--muted); font-size: .88rem; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+input[type=text], select { font: 500 .95rem var(--mono); padding: 7px 9px; border: 1px solid var(--line);
+  border-radius: 6px; background: var(--bg); color: var(--fg); min-width: 0; }
+button, .filebtn { font: 500 .92rem var(--sans); padding: 9px 14px; border-radius: 8px; border: 1px solid var(--accent);
+  background: var(--accent); color: var(--accent-fg); cursor: pointer; }
+button.ghost { background: transparent; color: var(--accent); }
+button:focus-visible, .filebtn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.filebtn input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: var(--surface); color: var(--fg); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+.stage { position: relative; background: var(--stage); border-radius: 8px; overflow: hidden; }
+.stage canvas { display: block; width: 100%; height: auto; }
+.stage .empty { padding: 60px 16px; text-align: center; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font: 500 .85rem var(--mono); padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.chip.now { border-color: var(--ok); color: var(--ok); }
+.chip.seen { border-color: var(--line); color: var(--fg); }
+.verdict { font-weight: 600; font-size: 1.05rem; }
+.verdict.ok { color: var(--ok); } .verdict.bad { color: var(--bad); }
+ul.msgs { margin: 6px 0 0; padding-left: 18px; }
+.err { color: var(--bad); }
+table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+td.mono, th.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+td.name { word-break: break-all; }
+.tablewrap { overflow-x: auto; }
+.views { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.views div { border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.views b { display: block; font: 500 1.4rem var(--mono); }
+.views .ok b { color: var(--ok); } .views .warn b { color: var(--warn); } .views .bad b { color: var(--bad); }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>AprilTag check</h1>
+    <span class="muted">Will your printed tags work for scale? <a href="./">Back to preview</a></span>
+  </header>
+
+  <div class="card">
+    <p class="label">Your tags</p>
+    <div class="row">
+      <label for="ids">Ids laid out</label>
+      <input id="ids" type="text" value="0-3" size="10" spellcheck="false">
+      <span id="idsErr" class="err" role="alert"></span>
+    </div>
+    <p class="muted" style="margin-top:8px">AprilTag 36h11 only, from <code>scripts/make_tags.py</code> (normal QR codes are not detected).
+      This page checks detection, not scale: the scale comes from <code>scripts/tag_scale.py</code> after COLMAP.</p>
+  </div>
+
+  <div class="seg" role="group" aria-label="Mode">
+    <button id="modeLive" aria-pressed="true">Live camera</button>
+    <button id="modePhotos" aria-pressed="false">Check photos</button>
+  </div>
+
+  <section id="live" class="card">
+    <p class="label">Live camera (quick check)</p>
+    <div class="row" style="margin-bottom:10px">
+      <button id="camBtn">Start camera</button>
+      <span id="camStatus" class="muted"></span>
+    </div>
+    <div class="stage"><canvas id="camCanvas" hidden></canvas><div id="camEmpty" class="empty">Point the back camera at the tags. Green = good, amber = too small, red = wrong or duplicate id.</div></div>
+    <p class="label" style="margin-top:12px">Seen now / this session</p>
+    <div id="liveChips" class="chips"></div>
+  </section>
+
+  <section id="photos" class="card" hidden>
+    <p class="label">Check the photo set (what tag_scale.py will see)</p>
+    <div class="row" style="margin-bottom:10px">
+      <label class="filebtn">Choose photos<input id="files" type="file" accept="image/*" multiple></label>
+      <label for="res" class="muted">Detect at</label>
+      <select id="res">
+        <option value="1600">1600 px (fast)</option>
+        <option value="2400" selected>2400 px</option>
+        <option value="0">full size (slow)</option>
+      </select>
+      <span id="progress" class="muted" aria-live="polite"></span>
+    </div>
+    <div id="summary" hidden>
+      <p id="verdict" class="verdict"></p>
+      <div id="views" class="views"></div>
+      <ul id="msgs" class="msgs"></ul>
+      <p class="label" style="margin-top:14px">Last photo checked</p>
+      <div class="stage"><canvas id="photoCanvas"></canvas></div>
+      <p class="label" style="margin-top:14px">Per photo</p>
+      <div class="tablewrap"><table>
+        <thead><tr><th>Photo</th><th class="mono">Tags</th><th class="mono">Smallest edge</th><th>Problems</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table></div>
+    </div>
+  </section>
+</div>
+
+<script src="vendor/js-aruco2/cv.js"></script>
+<script src="vendor/js-aruco2/aruco.js"></script>
+<script src="tag36h11.js?v=1"></script>
+<script type="module">
+import { parseIds, toMarkers, assessFrame, summarize, MIN_VIEWS, GOOD_VIEWS } from "./tagcheck.js?v=1";
+
+const $ = (id) => document.getElementById(id);
+const detector = new AR.Detector({ dictionaryName: "APRILTAG_36h11" });
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+let expected = [0, 1, 2, 3];
+function readIds() {
+  try { expected = parseIds($("ids").value); $("idsErr").textContent = expected.length ? "" : "enter at least one id"; }
+  catch (e) { $("idsErr").textContent = e.message; }
+  renderChips(); if (photoResults.length) renderSummary();
+}
+$("ids").addEventListener("input", readIds);
+
+// ---------- shared ----------
+const work = document.createElement("canvas");
+const wctx = work.getContext("2d", { willReadFrequently: true });
+
+// Detect on a copy at most maxSide px; corners come back in source pixels
+function detect(source, w, h, maxSide) {
+  const k = maxSide && Math.max(w, h) > maxSide ? maxSide / Math.max(w, h) : 1;
+  work.width = Math.round(w * k); work.height = Math.round(h * k);
+  wctx.drawImage(source, 0, 0, work.width, work.height);
+  const img = wctx.getImageData(0, 0, work.width, work.height);
+  return toMarkers(detector.detect(img), 1 / k);
+}
+
+function draw(canvas, source, w, h, tags) {
+  const k = Math.min(1, 1280 / Math.max(w, h));
+  canvas.width = Math.round(w * k); canvas.height = Math.round(h * k);
+  const c = canvas.getContext("2d");
+  c.drawImage(source, 0, 0, canvas.width, canvas.height);
+  c.lineWidth = Math.max(2, canvas.width / 320);
+  c.font = `600 ${Math.max(14, canvas.width / 40)}px ${css("--mono") || "monospace"}`;
+  for (const t of tags) {
+    const bad = t.problems.some((p) => !p.startsWith("small"));
+    const col = bad ? "#e5484d" : t.problems.length ? "#f5a524" : "#30a46c";
+    c.strokeStyle = col; c.beginPath();
+    t.corners.forEach(([x, y], i) => (i ? c.lineTo(x * k, y * k) : c.moveTo(x * k, y * k)));
+    c.closePath(); c.stroke();
+    const [x0, y0] = t.corners[0];
+    c.fillStyle = col; c.fillRect(x0 * k - 4, y0 * k - 4, 8, 8);     // corner 0 = tag's top-left
+    const cx = t.corners.reduce((s, p) => s + p[0], 0) / 4 * k, cy = t.corners.reduce((s, p) => s + p[1], 0) / 4 * k;
+    const label = `id ${t.id}`, tw = c.measureText(label).width;
+    c.fillStyle = "rgba(0,0,0,.65)"; c.fillRect(cx - tw / 2 - 6, cy - 14, tw + 12, 26);
+    c.fillStyle = "#fff"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText(label, cx, cy);
+  }
+}
+
+// ---------- mode switch ----------
+function setMode(live) {
+  $("modeLive").setAttribute("aria-pressed", live); $("modePhotos").setAttribute("aria-pressed", !live);
+  $("live").hidden = !live; $("photos").hidden = live;
+  if (!live) stopCamera();
+}
+$("modeLive").onclick = () => setMode(true);
+$("modePhotos").onclick = () => setMode(false);
+
+// ---------- live camera ----------
+const video = document.createElement("video");
+video.playsInline = true; video.muted = true;
+let stream = null, lastDetect = 0, nowIds = new Set();
+const sessionIds = new Set();
+
+function renderChips() {
+  $("liveChips").replaceChildren(...expected.map((id) => {
+    const s = document.createElement("span");
+    s.className = "chip" + (nowIds.has(id) ? " now" : sessionIds.has(id) ? " seen" : "");
+    s.textContent = `id ${id}${nowIds.has(id) ? " now" : sessionIds.has(id) ? " seen" : ""}`;
+    return s;
+  }));
+}
+
+async function startCamera() {
+  if (!navigator.mediaDevices?.getUserMedia) { $("camStatus").textContent = "Camera needs https (or localhost) and a browser that allows it."; return; }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+  } catch (e) { $("camStatus").textContent = `Camera blocked: ${e.message}`; return; }
+  video.srcObject = stream; await video.play();
+  $("camBtn").textContent = "Stop camera"; $("camEmpty").hidden = true; $("camCanvas").hidden = false;
+  requestAnimationFrame(loop);
+}
+function stopCamera() {
+  if (!stream) return;
+  stream.getTracks().forEach((t) => t.stop()); stream = null;
+  $("camBtn").textContent = "Start camera"; $("camStatus").textContent = "";
+}
+$("camBtn").onclick = () => (stream ? stopCamera() : startCamera());
+
+let liveTags = [], lastCost = 0;
+function loop(ts) {
+  if (!stream) return;
+  const w = video.videoWidth, h = video.videoHeight;
+  // detection at most half the time (slow phones stay responsive), the rest just redraws
+  if (w && ts - lastDetect > Math.max(120, 2 * lastCost)) {
+    const t0 = performance.now();
+    liveTags = assessFrame(detect(video, w, h, 960), expected);
+    lastDetect = ts; lastCost = performance.now() - t0;
+    nowIds = new Set(liveTags.filter((t) => expected.includes(t.id)).map((t) => t.id));
+    nowIds.forEach((id) => sessionIds.add(id));
+    $("camStatus").textContent = `${w}x${h}, ${liveTags.length} tag(s), ${Math.round(performance.now() - t0)} ms per check`;
+    renderChips();
+  }
+  if (w) draw($("camCanvas"), video, w, h, liveTags);
+  requestAnimationFrame(loop);
+}
+
+// ---------- photo set ----------
+let photoResults = [];
+
+$("files").addEventListener("change", async (e) => {
+  const files = [...e.target.files];
+  if (!files.length) return;
+  photoResults = []; $("rows").replaceChildren(); $("summary").hidden = false;
+  const maxSide = Number($("res").value), t0 = performance.now();
+  for (let i = 0; i < files.length; i++) {
+    let tags = [], error = null;
+    try {
+      const bmp = await createImageBitmap(files[i]);
+      tags = assessFrame(detect(bmp, bmp.width, bmp.height, maxSide), expected);
+      draw($("photoCanvas"), bmp, bmp.width, bmp.height, tags);
+      bmp.close();
+    } catch (err) { error = `could not read: ${err.message || err}`; }
+    photoResults.push({ name: files[i].name, tags, error });
+    addRow(photoResults.at(-1));
+    const done = i + 1, el = (performance.now() - t0) / 1000;
+    $("progress").textContent = `${done}/${files.length} (${Math.round(100 * done / files.length)}%) - ${el.toFixed(0)}s elapsed, eta ${(el / done * (files.length - done)).toFixed(0)}s`;
+    renderSummary();
+    await new Promise((r) => setTimeout(r));                // let the page repaint between photos
+  }
+  e.target.value = "";
+});
+
+function addRow(p) {
+  const tr = document.createElement("tr");
+  const ids = p.tags.map((t) => t.id).sort((a, b) => a - b);
+  const minEdge = p.tags.length ? Math.round(Math.min(...p.tags.map((t) => t.minEdge))) + " px" : "";
+  const probs = p.error ? [p.error] : p.tags.flatMap((t) => t.problems.map((x) => `id ${t.id}: ${x}`));
+  for (const [text, cls] of [[p.name, "name"], [ids.join(", ") || "none", "mono"], [minEdge, "mono"], [probs.join("; "), ""]]) {
+    const td = document.createElement("td"); td.textContent = text; if (cls) td.className = cls; tr.append(td);
+  }
+  $("rows").append(tr);
+}
+
+function renderSummary() {
+  const s = summarize(photoResults.filter((p) => !p.error).map((p) => ({ name: p.name, tags: p.tags })), expected);
+  $("verdict").textContent = s.ready
+    ? `Ready: ${s.usable.length} of ${expected.length} tags usable by tag_scale.py.`
+    : s.duplicates.length ? "Not ready: a tag id appears twice." : `Not ready: needs at least 2 tags each in ${MIN_VIEWS}+ photos.`;
+  $("verdict").className = "verdict " + (s.ready ? "ok" : "bad");
+  $("views").replaceChildren(...expected.map((id) => {
+    const n = s.views[id], d = document.createElement("div");
+    d.className = n >= GOOD_VIEWS ? "ok" : n >= MIN_VIEWS ? "warn" : "bad";
+    d.innerHTML = `<span class="muted">id ${id}</span><b>${n}</b><span class="muted">photo${n === 1 ? "" : "s"}</span>`;
+    return d;
+  }));
+  const errs = photoResults.filter((p) => p.error).length;
+  $("msgs").replaceChildren(...[...s.messages, ...(errs ? [`${errs} file(s) could not be read (HEIC? export as JPEG).`] : [])].map((m) => {
+    const li = document.createElement("li"); li.textContent = m; return li;
+  }));
+}
+
+readIds();
+</script>
+</body>
+</html>
