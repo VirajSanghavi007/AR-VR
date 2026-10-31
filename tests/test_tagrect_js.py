@@ -190,17 +190,73 @@ def test_pick_tags(node_available):
     assert not dup["ok"] and "id 0 seen twice" in dup["why"]
 
 
+def test_tag_axis_follows_the_top_edge(node_available):
+    flat = run("R.tagAxis([[0,0,0],[0.16,0,0],[0.16,0,0.16],[0,0,0.16]])")
+    assert np.allclose(flat, [1, 0, 0])
+    # a slightly sheared quad: mean of the top and bottom edges
+    assert np.allclose(run("R.tagAxis([[0,0,0],[0.16,0,0.02],[0.16,0,0.16],[0,0,0.16]])"),
+                       np.array([0.32, 0, 0.02]) / np.hypot(0.32, 0.02))
+
+
+def test_fit_from_two_opposite_corners(node_available):
+    r = run("R.fitFromTwo([[-0.4,0.1,-0.25],[0.4,0.1,0.25]], [[1,0,0],[1,0,0]], [0,1,0])")
+    assert r["width"] == pytest.approx(0.8) and r["height"] == pytest.approx(0.5)
+    assert np.allclose(r["center"], [0, 0.1, 0]) and np.allclose(r["u"], [1, 0, 0])
+    assert np.allclose(r["v"], np.cross(r["u"], r["n"])) and r["angleErrDeg"] == pytest.approx(0)
+    assert np.allclose(sorted(map(tuple, r["corners"])), sorted([(-0.4, 0.1, -0.25), (0.4, 0.1, -0.25), (0.4, 0.1, 0.25), (-0.4, 0.1, 0.25)]))
+    # tall: the tags' axis is the short side, so u swaps to the long one, still right-handed
+    t = run("R.fitFromTwo([[0,0,0],[0.3,0,0.9]], [[1,0,0],[1,0,0]], [0,1,0])")
+    assert t["width"] == pytest.approx(0.9) and t["height"] == pytest.approx(0.3)
+    assert np.allclose(np.abs(t["u"]), [0, 0, 1]) and np.allclose(t["v"], np.cross(t["u"], t["n"]))
+    # rotated 30 deg, axes with a tilt out of the plane and a 4 deg disagreement
+    a = np.radians(30)
+    R = np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]])
+    c = (np.array([[-0.4, 0, -0.25], [0.4, 0, 0.25]]) @ R.T).tolist()
+    ax = [(R @ [np.cos(np.radians(d)), 0.1, np.sin(np.radians(d))]).tolist() for d in (2, -2)]
+    r = run(f"R.fitFromTwo({c}, {ax}, [0, 1, 0])")
+    assert r["angleErrDeg"] == pytest.approx(4, abs=1e-6) and np.allclose(r["u"], R @ [1, 0, 0], atol=1e-9)
+    assert r["width"] == pytest.approx(0.8) and r["height"] == pytest.approx(0.5)
+    # opposite axes fall back to the first tag's
+    assert np.allclose(run("R.fitFromTwo([[0,0,0],[0.8,0,0.5]], [[1,0,0],[-1,0,0]], [0,1,0])")["u"], [1, 0, 0])
+
+
+def test_fit_from_two_refuses_bad_input(node_available):
+    with pytest.raises(RuntimeError, match="need 2"):
+        run("R.fitFromTwo([[0,0,0]], [[1,0,0]], [0,1,0])")
+    with pytest.raises(RuntimeError, match="opposite corners"):
+        run("R.fitFromTwo([[0,0,0],[0.8,0,0.01]], [[1,0,0],[1,0,0]], [0,1,0])")
+    with pytest.raises(RuntimeError, match="opposite corners"):
+        run("R.fitFromTwo([[0,0,0],[0.01,0,0.8]], [[1,0,0],[1,0,0]], [0,1,0])")
+
+
+def test_align_axes_and_rect_moved(node_available):
+    a = "{center: [0,0,0], u: [1,0,0], v: [0,0,-1], width: 0.8, height: 0.5}"
+    flipped = run(f"R.alignAxes({{center: [0,0,0], u: [-1,0,0], v: [0,0,1], width: 0.8, height: 0.5}}, {a})")
+    assert flipped["u"] == [1, 0, 0] and flipped["v"] == [0, 0, -1]
+    assert run(f"R.alignAxes({a}, {a})")["u"] == [1, 0, 0]
+    assert run(f"R.alignAxes({a}, null)")["u"] == [1, 0, 0]
+    same = "{center: [0.01,0,0], u: [-1,0,0], v: [0,0,1], width: 0.81, height: 0.49}"
+    assert run(f"R.rectMoved({a}, {same})") is False            # small jitter, u sign flip is not a move
+    for moved in ("{center: [0.03,0,0], u: [1,0,0], width: 0.8, height: 0.5}",
+                  "{center: [0,0,0], u: [1,0,0], width: 0.83, height: 0.5}",
+                  "{center: [0,0,0], u: [1,0,0], width: 0.8, height: 0.47}",
+                  f"{{center: [0,0,0], u: [{np.cos(np.radians(5))},0,{np.sin(np.radians(5))}], width: 0.8, height: 0.5}}"):
+        assert run(f"R.rectMoved({a}, {moved})") is True, moved
+
+
 # ---------- smoke ----------
 
 def test_tagar_page_wiring():
     html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
     for src in re.findall(r'(?:src|from)="\.?/?([\w./-]+?\.js)(?:\?[^"]*)?"', html):
         assert (PREVIEW / src).exists(), src
-    js = (PREVIEW / "tagrect.js").read_text(encoding="utf-8")
-    names = re.search(r'import \{([^}]+)\} from "\./tagrect\.js', html).group(1)
-    for name in re.findall(r"\w+", names):
-        assert re.search(rf"export (?:function|const) {name}\b", js), name
-    for feature in ('"hit-test"', '"camera-access"', '"anchors"', "createAnchor", "getCameraImage"):
+    for mod in ("tagrect", "panel"):
+        js = (PREVIEW / f"{mod}.js").read_text(encoding="utf-8")
+        names = re.search(rf'import \{{([^}}]+)\}} from "\./{mod}\.js', html).group(1)
+        for name in re.findall(r"\w+", names):
+            assert re.search(rf"export (?:function|const) {name}\b", js), name
+    for feature in ('"hit-test"', '"camera-access"', '"anchors"', "createAnchor", "getCameraImage", 'id="touch"',
+                    "pointerdown", "pointermove", "pointerup", "fitFromTwo", "rectMoved(rect, r)", "lock(frame, r, true)"):
         assert feature in html, feature
     assert 'href="tagar.html"' in (PREVIEW / "index.html").read_text(encoding="utf-8")
 
@@ -216,27 +272,30 @@ const raw = fs.readFileSync(process.argv[3]);
 import(require("url").pathToFileURL(process.argv[1] + "/tagrect.js").href).then((R) => {
   const img = R.downsample(new Uint8Array(raw.buffer, raw.byteOffset, raw.length), job.w, job.h, true, job.maxPixels);
   const found = new AR.Detector({ dictionaryName: "APRILTAG_36h11" }).detect(img);
-  const pick = R.pickTags(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) })), [0, 1, 2, 3]);
+  const pick = R.pickTags(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) })), job.ids);
   if (!pick.ok) { console.log(JSON.stringify(pick)); return; }
   const n = [job.hit[4], job.hit[5], job.hit[6]], p0 = [job.hit[12], job.hit[13], job.hit[14]];
-  const centres = [], edges = [];
+  const centres = [], edges = [], axes = [];
   for (const t of pick.tags) {
     const w = t.corners.map(([x, y]) => R.rayPlane(R.pixelRay(x, y, job.w, job.h, job.proj, job.pose), p0, n));
     centres.push(w.reduce((a, p) => a.map((v, i) => v + p[i] / 4), [0, 0, 0]));
     edges.push(R.tagEdge(w));
+    axes.push(R.tagAxis(w));
   }
-  console.log(JSON.stringify({ ok: true, factor: img.factor, rect: R.fitRectangle(centres, n), edges }));
+  const rect = job.ids.length === 2 ? R.fitFromTwo(centres, axes, n) : R.fitRectangle(centres, n);
+  console.log(JSON.stringify({ ok: true, factor: img.factor, rect, edges }));
 });
 """
 
 CENTRES = {0: [-0.4, -0.25], 1: [0.4, -0.25], 2: [0.4, 0.25], 3: [-0.4, 0.25]}
 
 
-def table_photo(tmp_path, ids=(0, 1, 2, 3), max_pixels=2.6e6):
-    """4 tags (0.16 m black square) on the plane y = 0, photographed from EYE; RGBA bottom-up."""
+def table_photo(tmp_path, ids=(0, 1, 2, 3), max_pixels=2.6e6, corners=(0, 1, 2, 3), want=(0, 1, 2, 3)):
+    """Tags (0.16 m black square) at the given rectangle corners on the plane y = 0, upright along +x,
+    photographed from EYE; RGBA bottom-up. `want` = the ids the page is told to look for."""
     c2w = cam_to_world(EYE, TARGET)
     img = np.full((H, W), 170, np.uint8)
-    for k, tid in zip(CENTRES, ids):
+    for k, tid in zip(corners, ids):
         t = T.tag_image(tid, cell_px=20)                    # 10 cells: black square 8 cells = 0.16 m
         s = t.shape[0]
         cx, cz = CENTRES[k]
@@ -248,7 +307,7 @@ def table_photo(tmp_path, ids=(0, 1, 2, 3), max_pixels=2.6e6):
     rgba = cv2.cvtColor(img[::-1], cv2.COLOR_GRAY2RGBA)     # gl.readPixels rows start at the bottom
     (tmp_path / "frame.bin").write_bytes(rgba.tobytes())
     hit = np.eye(4)                                          # hit-test pose: table plane, y up
-    job = {"w": W, "h": H, "proj": col(projection()), "pose": col(c2w), "hit": col(hit), "maxPixels": max_pixels}
+    job = {"w": W, "h": H, "proj": col(projection()), "pose": col(c2w), "hit": col(hit), "maxPixels": max_pixels, "ids": list(want)}
     (tmp_path / "job.json").write_text(json.dumps(job))
 
 
@@ -275,3 +334,20 @@ def test_table_photo_with_a_wrong_tag_is_refused(tmp_path, node_available):
     table_photo(tmp_path, ids=(0, 1, 2, 7))
     r = chain(tmp_path)
     assert r["ok"] is False and "missing id 3" in r["why"]
+
+
+def test_table_photo_with_two_tags_gives_the_true_rectangle(tmp_path, node_available):
+    table_photo(tmp_path, ids=(0, 1), corners=(0, 2), want=(0, 1))     # opposite corners
+    r = chain(tmp_path)
+    assert r["ok"]
+    assert r["rect"]["width"] == pytest.approx(0.8, abs=0.01)
+    assert r["rect"]["height"] == pytest.approx(0.5, abs=0.01)
+    assert np.allclose(r["rect"]["center"], [0, 0, 0], atol=0.01)
+    assert np.allclose(np.abs(r["rect"]["u"]), [1, 0, 0], atol=0.02)
+    assert r["rect"]["angleErrDeg"] < 2
+
+
+def test_two_tags_along_one_side_are_refused(tmp_path, node_available):
+    table_photo(tmp_path, ids=(0, 1), corners=(0, 1), want=(0, 1))     # same long side
+    with pytest.raises(RuntimeError, match="opposite corners"):
+        chain(tmp_path)

@@ -163,3 +163,43 @@ export function pickTags(markers, ids) {
   if (missing.length) return { ok: false, found: ids.length - missing.length, why: `${ids.length - missing.length} of ${ids.length} tags in view, missing id ${missing.join(", ")}` };
   return { ok: true, tags: ids.map((id) => seen.get(id)[0]) };
 }
+
+// Direction of a tag's top edge on the table, from its 4 world corners in detector order
+// (top-left, top-right, bottom-right, bottom-left as printed), averaged over top and bottom edges.
+export const tagAxis = (corners) => unit(add(sub(corners[1], corners[0]), sub(corners[2], corners[3])));
+
+// Rectangle from 2 tags at opposite corners, both laid the same way up: the tags' own edges give
+// the rectangle's directions, the diagonal between their centres gives its size. Same result shape
+// as fitRectangle; angleErrDeg is how far apart the two tags' directions are.
+export function fitFromTwo(centers, axes, n) {
+  if (centers.length !== 2 || axes.length !== 2) throw new Error(`need 2 tag points, got ${centers.length}`);
+  n = unit(n);
+  const flat = (a) => sub(a, mul(n, dot(a, n)));
+  const a0 = unit(flat(axes[0])), a1 = unit(flat(axes[1]));
+  const angleErrDeg = (Math.acos(Math.max(-1, Math.min(1, dot(a0, a1)))) * 180) / Math.PI;
+  const s = add(a0, a1);
+  let u = norm(s) > 1e-6 ? unit(s) : a0, v = cross(u, n);
+  const d = flat(sub(centers[1], centers[0]));
+  let a = dot(d, u), b = dot(d, v);
+  if (Math.min(Math.abs(a), Math.abs(b)) < 0.02)
+    throw new Error("the 2 tags are along one side: put them at opposite corners of the rectangle");
+  if (Math.abs(b) > Math.abs(a)) { u = v; v = cross(u, n); [a, b] = [dot(d, u), dot(d, v)]; }   // u = long side
+  const c0 = centers[0];
+  const center = mul(add(c0, centers[1]), 0.5);
+  const corners = [c0, add(c0, mul(u, a)), add(c0, d), add(c0, mul(v, b))];
+  return { center, u, n, v, width: Math.abs(a), height: Math.abs(b), corners, angleErrDeg, diagErrPct: 0 };
+}
+
+// Flip u and v of a new fit when they point against the old one, so a re-fit of the same tags
+// never spins the model 180 degrees (u, n, v stays right-handed).
+export function alignAxes(r, prev) {
+  if (!prev || dot(r.u, prev.u) >= 0) return r;
+  return { ...r, u: mul(r.u, -1), v: mul(r.v, -1) };
+}
+
+// Did the tags move: centre or a side by more than tol metres, or the long side by more than tolDeg.
+export function rectMoved(a, b, tol = 0.02, tolDeg = 3) {
+  const turn = (Math.acos(Math.min(1, Math.abs(dot(a.u, b.u)))) * 180) / Math.PI;
+  return norm(sub(a.center, b.center)) > tol || Math.abs(a.width - b.width) > tol ||
+    Math.abs(a.height - b.height) > tol || turn > tolDeg;
+}
