@@ -153,8 +153,27 @@ export function downsample(rgba, width, height, flipY, maxPixels = 2.6e6) {
   return { data: out, width: w, height: h, factor: step };
 }
 
+// The detector can return one printed tag twice, from the outer and an inner outline of its black
+// border. Keep the biggest of same-id markers whose centres lie within one tag of each other.
+const area2 = (c) => Math.abs(c.reduce((s, p, i) => s + p[0] * c[(i + 1) % 4][1] - c[(i + 1) % 4][0] * p[1], 0)) / 2;
+export function mergeNested(markers) {
+  const out = [];
+  for (const m of markers.slice().sort((a, b) => area2(b.corners) - area2(a.corners))) {
+    const c = m.corners.reduce((a, p) => [a[0] + p[0] / 4, a[1] + p[1] / 4], [0, 0]);
+    if (!out.some((o) => o.id === m.id && Math.hypot(c[0] - o.c[0], c[1] - o.c[1]) < Math.sqrt(area2(o.corners))))
+      out.push({ ...m, c });
+  }
+  return out.map(({ c, ...m }) => m);
+}
+
+// A hit-test normal within maxDeg of straight up is a level table: WebXR's local space has +y up
+// (gravity), so use exactly that instead of ARCore's per-frame estimate, which wobbles by degrees.
+export const levelNormal = (n, maxDeg = 10) =>
+  unit(n)[1] > Math.cos((maxDeg * Math.PI) / 180) ? [0, 1, 0] : unit(n);
+
 // The 4 expected tags from one detection, or why not. markers: [{id, corners: [[x, y] x4]}].
 export function pickTags(markers, ids) {
+  markers = mergeNested(markers);
   const seen = new Map();
   for (const m of markers) if (ids.includes(m.id)) seen.set(m.id, (seen.get(m.id) || []).concat([m]));
   const dup = [...seen].filter(([, l]) => l.length > 1).map(([id]) => id);

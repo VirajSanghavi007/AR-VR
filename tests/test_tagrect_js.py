@@ -186,7 +186,8 @@ def test_pick_tags(node_available):
     miss = run(f"R.pickTags([{m(0)},{m(2)}], [0,1,2,3])")
     assert not miss["ok"] and miss["found"] == 2 and "missing id 1, 3" in miss["why"]
     assert run(f"R.pickTags([], [0,1,2,3])")["found"] == 0
-    dup = run(f"R.pickTags([{m(0)},{m(0)},{m(1)},{m(2)},{m(3)}], [0,1,2,3])")
+    far = "{id: 0, corners: [[9,9],[10,9],[10,10],[9,10]]}"            # the same id printed twice, far apart
+    dup = run(f"R.pickTags([{m(0)},{far},{m(1)},{m(2)},{m(3)}], [0,1,2,3])")
     assert not dup["ok"] and "id 0 seen twice" in dup["why"]
 
 
@@ -400,3 +401,32 @@ def test_two_tag_fit_is_steady_under_detection_noise(node_available):
     })()""")
     assert res["locks"] > 100
     assert np.std(res["w"]) < 0.008 and abs(np.mean(res["w"]) - 0.8) < 0.005
+
+
+def test_merge_nested_keeps_the_biggest_outline(node_available):
+    big = "{id: 4, corners: [[0,0],[10,0],[10,10],[0,10]]}"
+    inner = "{id: 4, corners: [[1,1],[9,1],[9,9],[1,9]]}"           # inner outline of the same tag
+    other = "{id: 5, corners: [[2,2],[8,2],[8,8],[2,8]]}"           # a different id at the same spot
+    far = "{id: 4, corners: [[30,0],[40,0],[40,10],[30,10]]}"       # the same id elsewhere: a real duplicate
+    out = run(f"R.mergeNested([{inner},{other},{big},{far}])")
+    assert sorted((m["id"], m["corners"][0][0]) for m in out) == [(4, 0), (4, 30), (5, 2)]
+    near = "{id: 4, corners: [[8,0],[18,0],[18,10],[8,10]]}"       # centre 8 away, inside one tag edge (10)
+    assert len(run(f"R.mergeNested([{big},{near}])")) == 1
+    assert run("R.mergeNested([])") == []
+    assert "c" not in run(f"R.mergeNested([{big}])")[0]
+
+
+def test_pick_tags_ignores_a_nested_outline(node_available):
+    m = lambda i, a, b: f"{{id: {i}, corners: [[{a},{a}],[{b},{a}],[{b},{b}],[{a},{b}]]}}"
+    r = run(f"R.pickTags([{m(0, 0, 10)},{m(0, 1, 9)},{m(1, 30, 40)}], [0,1])")
+    assert r["ok"] and [t["id"] for t in r["tags"]] == [0, 1]
+
+
+def test_level_normal_snaps_a_near_vertical_normal(node_available):
+    assert run("R.levelNormal([0.02, 1, -0.03])") == [0, 1, 0]
+    t = np.radians(9.9); assert run(f"R.levelNormal([{np.sin(t)}, {np.cos(t)}, 0])") == [0, 1, 0]
+    t = np.radians(10.1); n = [float(np.sin(t)), float(np.cos(t)), 0]
+    assert np.allclose(run(f"R.levelNormal({n})"), n)                  # a real slope is kept
+    assert np.allclose(run("R.levelNormal([0, 5, 0])"), [0, 1, 0])
+    assert np.allclose(run("R.levelNormal([1, 0, 0])"), [1, 0, 0])
+    assert run("R.levelNormal([0.1, 1, 0], 3)") != [0, 1, 0]           # custom tolerance

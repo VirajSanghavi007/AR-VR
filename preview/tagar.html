@@ -120,8 +120,9 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
 <script type="module">
 import * as THREE from "three";
 import { parseIds } from "./tagcheck.js?v=1";
+import { PhoneEmulator, rng } from "./phoneemu.js?v=1";
 import { pixelRay, rayPlane, fitRectangle, fitFromTwo, tagAxis, alignAxes, rectMoved, tagEdge, fitScale, bestTurns,
-         scaleLabel, nextNiceScale, isStable, downsample, pickTags, averageTwo, tagsMoved } from "./tagrect.js?v=3";
+         scaleLabel, nextNiceScale, isStable, downsample, pickTags, averageTwo, tagsMoved, levelNormal } from "./tagrect.js?v=4";
 import { PANEL_LOOKS, lookByKey, nextLook, cellLayout, panelHit, twistDelta, isLongPress, clampToBox,
          yawDeg } from "./panel.js?v=1";
 
@@ -178,7 +179,7 @@ let rect = null, scale = 1, fitS = 1, turns = 0, anchor = null, lockPose = null,
 let lastProj = null, lastPose = null, simulated = false;
 chooseLook(panel.look);
 let ids = [0, 1, 2, 3], tagSize = 0.16, history = [], lastHit = null, lastHitAt = 0, lastDetect = 0;
-let flipY = true, flipKnown = false, detector = null, lastEdge = 0;
+let flipY = true, flipKnown = false, detector = null, lastEdge = 0, emuCamera = null, emu = null, emuR = null;
 
 function buildScene() {
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -312,6 +313,7 @@ function setButtons(locked) {
 
 // ---------- tag detection on the AR camera frame ----------
 function readCamera(frame, view) {
+  if (emuCamera) return emuCamera(view);        // desktop phone emulator: renders the tags itself
   const gl = renderer.getContext();
   const tex = binding.getCameraImage(view.camera);
   const w = view.camera.width, h = view.camera.height;
@@ -337,7 +339,7 @@ function detectRect(frame, view) {
   const pick = pickTags(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) })), ids);
   if (!pick.ok) return pick.why + (pick.found ? `: step back so all ${ids.length} fit, or move closer if a far one is small` : "");
   // before the lock: the hit-test plane; after it: the table the tags were found on
-  const hp = lastHit, n = rect ? rect.n : [hp[4], hp[5], hp[6]], p0 = rect ? rect.center : [hp[12], hp[13], hp[14]];
+  const hp = lastHit, n = rect ? rect.n : levelNormal([hp[4], hp[5], hp[6]]), p0 = rect ? rect.center : [hp[12], hp[13], hp[14]];
   const proj = Array.from(view.projectionMatrix), pose = Array.from(view.transform.matrix);
   const centers = [], edges = [], axes = [];
   for (const t of pick.tags) {
@@ -404,6 +406,33 @@ function relock() {
   $("hud").innerHTML = `Aim between the ${ids.length} tags`;
 }
 
+// One detection tick (the XR loop and the desktop emulator both call this): find the tags before the
+// lock, and after it keep watching them, since a stable new rectangle somewhere else means they were moved.
+let warnedCamera = false;
+function detectStep(frame, view) {
+  const now = performance.now();
+  if (rect && view.camera && !grabbed && now - lastDetect > FOLLOW_EVERY_MS) {
+    lastDetect = now;
+    const r = detectRect(frame, view);
+    // 2 tags: judge by where the tags are, their fitted size and angle still wobble a little
+    const moved = typeof r !== "string" &&
+      (ids.length === 2 ? tagsMoved(rect.tags, r.tags) || rectMoved(rect, r, 0.05, 8) : rectMoved(rect, r));
+    if (moved) lock(frame, r, true);
+  } else if (!rect && now - lastDetect > DETECT_EVERY_MS) {
+    lastDetect = now;
+    if (!view.camera) {
+      if (!warnedCamera) $("hud").innerHTML = "This browser does not give AR pages the camera image<small>needs Chrome 107+ on Android with ARCore</small>";
+      warnedCamera = true;
+    } else if (!lastHit) {
+      $("hud").innerHTML = "Move the phone slowly to find the table<small>the ring has to sit on the surface the tags are on</small>";
+    } else {
+      const r = detectRect(frame, view);
+      if (typeof r === "string") $("hud").innerHTML = r + "<small>keep the ring on the table, between the tags</small>";
+      else lock(frame, r);
+    }
+  }
+}
+
 // ---------- session ----------
 $("start").onclick = async () => {
   try { ids = parseIds($("ids").value); } catch (e) { $("status").textContent = e.message; return; }
@@ -430,7 +459,7 @@ $("start").onclick = async () => {
   });
   relock();
   $("hud").innerHTML = `Move the phone slowly to find the table<small>then aim between the ${ids.length} tags</small>`;
-  let warnedCamera = false;
+  warnedCamera = false;
   renderer.setAnimationLoop((t, frame) => {
     if (frame && hitSource) {
       const hits = frame.getHitTestResults(hitSource);
@@ -440,27 +469,7 @@ $("start").onclick = async () => {
       const pose = frame.getViewerPose(refSpace);
       const view = pose && pose.views[0];
       if (view) { lastProj = Array.from(view.projectionMatrix); lastPose = Array.from(view.transform.matrix); }
-      if (rect && view && view.camera && !grabbed && performance.now() - lastDetect > FOLLOW_EVERY_MS) {
-        // keep watching the tags: a stable new rectangle somewhere else means they were moved
-        lastDetect = performance.now();
-        const r = detectRect(frame, view);
-        // 2 tags: judge by where the tags are, their fitted size and angle still wobble a little
-        const moved = typeof r !== "string" &&
-          (ids.length === 2 ? tagsMoved(rect.tags, r.tags) || rectMoved(rect, r, 0.05, 8) : rectMoved(rect, r));
-        if (moved) lock(frame, r, true);
-      } else if (!rect && view && performance.now() - lastDetect > DETECT_EVERY_MS) {
-        lastDetect = performance.now();
-        if (!view.camera) {
-          if (!warnedCamera) $("hud").innerHTML = "This browser does not give AR pages the camera image<small>needs Chrome 107+ on Android with ARCore</small>";
-          warnedCamera = true;
-        } else if (!lastHit) {
-          $("hud").innerHTML = "Move the phone slowly to find the table<small>the ring has to sit on the surface the tags are on</small>";
-        } else {
-          const r = detectRect(frame, view);
-          if (typeof r === "string") $("hud").innerHTML = r + "<small>keep the ring on the table, between the tags</small>";
-          else lock(frame, r);
-        }
-      }
+      if (view) detectStep(frame, view);
       if (rect && anchor && frame.trackedAnchors && frame.trackedAnchors.has(anchor)) {
         const ap = frame.getPose(anchor.anchorSpace, refSpace);
         if (ap) group.matrix.fromArray(ap.transform.matrix);
@@ -582,6 +591,56 @@ window.__tagar = {
     return [((v.x + 1) / 2) * innerWidth, ((1 - v.y) / 2) * innerHeight];
   },
   roofAt(x, y) { return roofPoint(x, y); },
+  // Phone emulator: emuStart resets like Start AR does; each emuRun step renders the tags from a
+  // shaken virtual phone (tracking error trackMm, table normal off by normalDeg) and runs the
+  // page's own detection tick on it. Returns every HUD message and the lock state.
+  emuStart({ ids: idText = $("ids").value, size = 0.16, seed = 1 } = {}) {
+    if (!renderer) buildScene();
+    ids = parseIds(String(idText)); tagSize = size;
+    detector = detector || new AR.Detector({ dictionaryName: "APRILTAG_36h11" });
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    emu = emu || new PhoneEmulator(THREE, renderer, AR.DICTIONARIES.APRILTAG_36h11.codeList,
+                                   { w: Math.round(innerWidth * dpr), h: Math.round(innerHeight * dpr) });
+    emuR = rng(seed);
+    emuCamera = () => { pixels = emu.capture(); return { w: emu.w, h: emu.h }; };
+    flipKnown = false; flipY = true; lastHit = null;
+    relock();
+    $("overlay").classList.add("on");
+    renderer.domElement.style.cssText = "position:fixed;inset:0;z-index:0";
+    simulated = true;
+    return this.state();
+  },
+  emuRun({ tags, eye = [0, 0.75, 0.55], look = [0, 0, 0], steps = 12, shake = { mm: 4, deg: 0.4 },
+           trackMm = 1, normalDeg = 1 }) {
+    emu.setTags(tags, tagSize);
+    const log = [];
+    for (let i = 0; i < steps; i++) {
+      emu.aim(eye, look, emuR, shake);
+      const view = emu.view(emuR, trackMm);
+      lastHit = emu.hit([look[0], look[2]], emuR, normalDeg);
+      lastDetect = -1e9;
+      detectStep({}, view);
+      log.push(rect ? `locked ${rect.width.toFixed(3)} x ${rect.height.toFixed(3)} m` : $("hud").firstChild?.textContent || "");
+    }
+    // show it like the phone would: the camera image with the AR scene drawn over it
+    camera.projectionMatrix.copy(emu.camera.projectionMatrix);
+    camera.projectionMatrixInverse.copy(emu.camera.projectionMatrixInverse);
+    camera.matrixAutoUpdate = false;
+    camera.matrixWorld.copy(emu.camera.matrixWorld);
+    camera.matrixWorldInverse.copy(emu.camera.matrixWorldInverse);
+    scene.background = emu.target.texture;
+    renderer.setRenderTarget(null);
+    renderer.render(scene, camera);
+    return { log, rect: rect && { center: rect.center, width: rect.width, height: rect.height, u: rect.u, tags: rect.tags },
+             ...this.state() };
+  },
+  // The last emulated camera image (upright, as a PNG data URL) and the tag ids the detector reads in it.
+  emuFrame() {
+    const img = downsample(pixels, emu.w, emu.h, true), c = document.createElement("canvas");
+    c.width = img.width; c.height = img.height;
+    c.getContext("2d").putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
+    return { ids: detector.detect(img).map((m) => m.id), png: c.toDataURL() };
+  },
   follow(centres, n = [0, 1, 0], edge = 0.16) { const r = fitRectangle(centres, n); r.edge = edge; lock({}, r, true); return this.state(); },
   state() {
     return { locked: !!rect, scale, fit: fitS, turns, label: scaleLabel(scale),
