@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tabletop Tag AR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<style>
+:root {
+  --bg: #eef1f4; --surface: #ffffff; --fg: #16202b; --muted: #5b6876; --line: #d5dce3;
+  --accent: #1d3f8f; --accent-fg: #ffffff;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f151c; --surface: #17202a; --fg: #e6ecf2; --muted: #93a1b0; --line: #2a3644;
+  --accent: #7ea2ff; --accent-fg: #0b1220; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f151c; --surface: #17202a; --fg: #e6ecf2; --muted: #93a1b0; --line: #2a3644;
+  --accent: #7ea2ff; --accent-fg: #0b1220; color-scheme: dark }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--sans); }
+.wrap { max-width: 640px; margin: 0 auto; padding: 20px 16px 28px; display: flex; flex-direction: column; gap: 16px; }
+h1 { font-size: 1.4rem; font-weight: 600; margin: 0; }
+a { color: var(--accent); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px;
+        display: flex; flex-direction: column; gap: 12px; }
+ol { margin: 0; padding-left: 20px; }
+li + li { margin-top: 4px; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; background: var(--surface); color: var(--fg); font: 500 .9rem var(--sans); padding: 9px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+.seg button:focus-visible, .go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.go { border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-fg); font: 600 1rem var(--sans); padding: 13px; cursor: pointer; width: 100%; }
+.go:disabled { opacity: .45; cursor: not-allowed; }
+.label { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 6px; }
+.note { color: var(--muted); font-size: .85rem; margin: 0; }
+.row { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
+label.f { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; color: var(--muted); }
+label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(--line); border-radius: 8px;
+                background: var(--bg); color: var(--fg); min-width: 0; }
+
+/* In-AR overlay (WebXR dom-overlay) */
+#overlay { display: none; position: fixed; inset: 0; pointer-events: none; font-family: var(--sans); }
+#overlay.on { display: block; }
+.hud { position: absolute; left: 12px; right: 12px; top: max(12px, env(safe-area-inset-top));
+       background: rgba(12, 18, 26, .8); color: #fff; border-radius: 10px; padding: 10px 12px; pointer-events: auto; }
+.hud small { display: block; color: #b9c4d0; font-family: var(--mono); font-size: .78rem; }
+.bar { position: absolute; left: 12px; right: 12px; bottom: max(16px, env(safe-area-inset-bottom));
+       display: flex; flex-wrap: wrap; gap: 8px; pointer-events: auto; }
+.bar button { flex: 1 1 28%; border: 0; border-radius: 8px; padding: 12px 6px; font: 600 .9rem var(--sans);
+              background: rgba(12, 18, 26, .8); color: #fff; }
+.bar button.big { font-size: 1.2rem; padding: 8px 6px; }
+.bar button.primary { background: #1f9d55; }
+.bar button[hidden] { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Tabletop AR on 4 AprilTags</h1>
+  <p class="note"><a href="./">Back to the 3D preview</a> · <a href="tags.html">Check your printed tags</a></p>
+
+  <div class="card">
+    <p class="label">How it works</p>
+    <ol>
+      <li>Print 4 AprilTags (36h11, ids 0 to 3 by default, from <code>scripts/make_tags.py</code>) and lay them flat at the 4 corners of a rectangle on a table or the floor.</li>
+      <li>Press <b>Start AR</b>, move the phone until the ring sits on the surface, then aim at the middle of the 4 tags so all of them are in view.</li>
+      <li>The scanned terrace design snaps into the rectangle and scales itself to fit. It is pinned to the table: walk around it, it stays put.</li>
+      <li>Fix the scale with <b>−</b> / <b>+</b> (steps to round ratios like 1:20, 1:25), <b>Fit</b> to go back, <b>Rotate</b> to turn it 90°.</li>
+    </ol>
+    <div class="row">
+      <label class="f">Tag ids (4)<input id="ids" value="0-3" spellcheck="false" autocomplete="off"></label>
+      <label class="f">Printed tag size (mm)<input id="size" type="number" inputmode="decimal" min="10" max="2000" step="1" value="160"></label>
+    </div>
+    <div class="seg" role="group" aria-label="Panel layout">
+      <button id="b-tilted" aria-pressed="true">Tilted 15°</button>
+      <button id="b-flat" aria-pressed="false">Flat</button>
+    </div>
+    <p class="note">Tag size is the black square's edge. It is only a check: the app measures each tag in AR and warns if the surface was misjudged.</p>
+  </div>
+
+  <div class="card">
+    <button class="go" id="start" disabled>Start AR</button>
+    <p class="note" id="status">Checking whether this device supports AR…</p>
+  </div>
+</div>
+
+<div id="overlay">
+  <div class="hud" id="hud">Move the phone slowly to find the surface</div>
+  <div class="bar">
+    <button id="o-minus" class="big" hidden aria-label="Smaller model">−</button>
+    <button id="o-fit" hidden>Fit</button>
+    <button id="o-plus" class="big" hidden aria-label="Bigger model">+</button>
+    <button id="o-turn" hidden>Rotate</button>
+    <button id="o-relock" hidden>Find tags again</button>
+    <button id="o-exit">Exit</button>
+  </div>
+</div>
+
+<script src="vendor/js-aruco2/cv.js"></script>
+<script src="vendor/js-aruco2/aruco.js"></script>
+<script src="tag36h11.js?v=1"></script>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { parseIds } from "./tagcheck.js?v=1";
+import { pixelRay, rayPlane, fitRectangle, tagEdge, fitScale, bestTurns, scaleLabel, nextNiceScale,
+         isStable, downsample, pickTags } from "./tagrect.js?v=1";
+
+const MODELS = { tilted: "terrace_tilted_ar.glb", flat: "terrace_flat_ar.glb" };
+const DETECT_EVERY_MS = 250, HIT_GRACE_MS = 500, MAX_ANGLE_ERR = 12, EDGE_WARN = 0.15;
+const $ = (id) => document.getElementById(id);
+let design = null, model = null, layout = "tilted";
+
+// ---------- page ----------
+function chooseLayout(key) {
+  layout = key;
+  for (const k of Object.keys(MODELS)) $("b-" + k).setAttribute("aria-pressed", String(k === key));
+  model = null;
+  new GLTFLoader().load(MODELS[key], (g) => {
+    model = g.scene; model.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+    if (rect) place();
+  });
+}
+$("b-tilted").onclick = () => chooseLayout("tilted");
+$("b-flat").onclick = () => chooseLayout("flat");
+chooseLayout("tilted");
+
+// Design footprint from the scanned roof outline (glTF y-up, metres).
+fetch("terrace_anchor.json").then((r) => r.json()).then((d) => {
+  const ring = d.outline[0], xs = ring.map((p) => p[0]), zs = ring.map((p) => p[2]);
+  design = { ring, keepouts: d.keepouts, y: ring.reduce((s, p) => s + p[1], 0) / ring.length,
+             cx: (Math.max(...xs) + Math.min(...xs)) / 2, cz: (Math.max(...zs) + Math.min(...zs)) / 2,
+             w: Math.max(...xs) - Math.min(...xs), d: Math.max(...zs) - Math.min(...zs) };
+});
+
+(async () => {
+  const ok = navigator.xr && await navigator.xr.isSessionSupported("immersive-ar").catch(() => false);
+  $("start").disabled = !ok;
+  $("status").textContent = ok
+    ? "Ready. Lay the 4 tags out, then press Start AR."
+    : "This needs Chrome on an Android phone with Google Play Services for AR. iPhone Safari has no WebXR, so it cannot run here.";
+})();
+
+// ---------- scene ----------
+let renderer, scene, camera, reticle, group, session, hitSource, refSpace, binding, fb, pixels;
+let rect = null, scale = 1, fitS = 1, turns = 0, anchor = null, lockPose = null;
+let ids = [0, 1, 2, 3], tagSize = 0.16, history = [], lastHit = null, lastHitAt = 0, lastDetect = 0;
+let flipY = true, flipKnown = false, detector = null, lastEdge = 0;
+
+function buildScene() {
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.xr.enabled = true;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  document.body.appendChild(renderer.domElement);
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera();
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x777777, 1.8));
+  const sun = new THREE.DirectionalLight(0xffffff, 2.0);
+  sun.position.set(1, 3, 1);
+  scene.add(sun);
+  reticle = new THREE.Mesh(new THREE.RingGeometry(0.03, 0.04, 40).rotateX(-Math.PI / 2),
+                           new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  reticle.matrixAutoUpdate = false;
+  reticle.visible = false;
+  scene.add(reticle);
+  group = new THREE.Group();
+  group.matrixAutoUpdate = false;
+  scene.add(group);
+}
+
+const ringLine = (ring, y, color) => new THREE.LineLoop(
+  new THREE.BufferGeometry().setFromPoints(ring.map((p) => new THREE.Vector3(p[0], y, p[2]))),
+  new THREE.LineBasicMaterial({ color }));
+
+// Model in rectangle coordinates: x along the long side, y up, z across; centred, scaled.
+function place() {
+  group.clear();
+  if (!design || !rect) return;
+  const inner = new THREE.Group();
+  const shape = new THREE.Shape(design.ring.map((p) => new THREE.Vector2(p[0], -p[2])));
+  const slab = new THREE.Mesh(new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2).translate(0, design.y, 0),
+    new THREE.MeshStandardMaterial({ color: 0x9aa3ad, transparent: true, opacity: 0.55, side: THREE.DoubleSide }));
+  inner.add(slab, ringLine(design.ring, design.y + 0.02, 0xe5483f));
+  design.keepouts.forEach((k) => inner.add(ringLine(k, design.y + 0.03, 0xf08c28)));
+  if (model) inner.add(model);
+  inner.position.set(-design.cx, -design.y, -design.cz);
+  const turn = new THREE.Group();
+  turn.add(inner);
+  turn.rotation.y = (turns * Math.PI) / 2;
+  turn.scale.setScalar(scale);
+  group.add(turn);
+  // outline of the tag rectangle itself, on the table
+  const hw = rect.width / 2, hh = rect.height / 2;
+  group.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(
+    [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([x, z]) => new THREE.Vector3(x, 0.002, z))),
+    new THREE.LineBasicMaterial({ color: 0x1f9d55 })));
+  report();
+}
+
+function report() {
+  const cm = (m) => (m * scale * 100).toFixed(0);
+  const fit = Math.abs(scale - fitS) < 1e-9 ? " (auto fit)" : "";
+  const edge = lastEdge ? ` · tag edge ${(lastEdge * 1000).toFixed(0)} mm (printed ${(tagSize * 1000).toFixed(0)})` : "";
+  $("hud").innerHTML = `Scale ${scaleLabel(scale)}${fit}` +
+    `<small>tags ${(rect.width * 100).toFixed(1)} × ${(rect.height * 100).toFixed(1)} cm · model ${cm(design.w)} × ${cm(design.d)} cm of a ${design.w.toFixed(1)} × ${design.d.toFixed(1)} m roof${edge}</small>` +
+    (Math.abs(lastEdge - tagSize) / tagSize > EDGE_WARN
+      ? `<small style="color:#ffb86b">The tags measure off from the printed size: the ring was probably not on the table. Press Find tags again with the ring between the tags.</small>` : "");
+}
+
+function setButtons(locked) {
+  ["o-minus", "o-fit", "o-plus", "o-turn", "o-relock"].forEach((id) => { $(id).hidden = !locked; });
+}
+
+// ---------- tag detection on the AR camera frame ----------
+function readCamera(frame, view) {
+  const gl = renderer.getContext();
+  const tex = binding.getCameraImage(view.camera);
+  const w = view.camera.width, h = view.camera.height;
+  if (!tex || !w || !h) return null;
+  if (!pixels || pixels.length !== w * h * 4) pixels = new Uint8Array(w * h * 4);
+  fb = fb || gl.createFramebuffer();
+  const prev = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
+  return { w, h };
+}
+
+function detectRect(frame, view) {
+  const cam = readCamera(frame, view);
+  if (!cam) return "No camera frame from the browser";
+  const img = downsample(pixels, cam.w, cam.h, flipY);
+  const found = detector.detect(img);
+  // a mirrored tag never decodes, so the row order that decodes is the upright one
+  if (!found.length) { if (!flipKnown) flipY = !flipY; return "Aim at the tags so all 4 are in view"; }
+  flipKnown = true;
+  const pick = pickTags(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) })), ids);
+  if (!pick.ok) return pick.why + (pick.found ? ": step back so all 4 fit, or move closer if a far one is small" : "");
+  const hp = lastHit, n = [hp[4], hp[5], hp[6]], p0 = [hp[12], hp[13], hp[14]];
+  const proj = Array.from(view.projectionMatrix), pose = Array.from(view.transform.matrix);
+  const centers = [], edges = [];
+  for (const t of pick.tags) {
+    const world = t.corners.map(([x, y]) => rayPlane(pixelRay(x, y, cam.w, cam.h, proj, pose), p0, n));
+    if (world.some((p) => !p)) return "Tilt the phone down toward the table";
+    centers.push(world.reduce((a, p) => [a[0] + p[0] / 4, a[1] + p[1] / 4, a[2] + p[2] / 4], [0, 0, 0]));
+    edges.push(tagEdge(world));
+  }
+  let r;
+  try { r = fitRectangle(centers, n); } catch (e) { return e.message; }
+  if (r.angleErrDeg > MAX_ANGLE_ERR) return `Tags are not a rectangle (a corner is off by ${r.angleErrDeg.toFixed(0)}°): square them up`;
+  r.edge = edges.reduce((a, b) => a + b, 0) / edges.length;
+  history.push(r);
+  if (history.length > 6) history.shift();
+  return isStable(history) ? r : "All 4 tags found, hold still…";
+}
+
+async function lock(frame, r) {
+  rect = r; lastEdge = r.edge;
+  turns = bestTurns(design.w, design.d, r.width, r.height);
+  scale = fitS = fitScale(design.w, design.d, r.width, r.height, turns);
+  const m = new THREE.Matrix4().makeBasis(new THREE.Vector3(...r.u), new THREE.Vector3(...r.n), new THREE.Vector3(...r.v))
+    .setPosition(...r.center);
+  lockPose = m;
+  group.matrix.copy(m);
+  anchor = null;
+  if (frame.createAnchor) {
+    const q = new THREE.Quaternion().setFromRotationMatrix(m);
+    try {
+      anchor = await frame.createAnchor(new XRRigidTransform({ x: r.center[0], y: r.center[1], z: r.center[2] },
+                                                             { x: q.x, y: q.y, z: q.z, w: q.w }), refSpace);
+    } catch (e) { anchor = null; }   // still world-locked by tracking, just no drift correction
+  }
+  place();
+  setButtons(true);
+}
+
+function relock() {
+  if (anchor && anchor.delete) anchor.delete();
+  anchor = null; rect = null; history = []; group.clear(); setButtons(false);
+  $("hud").innerHTML = "Aim at the middle of the 4 tags";
+}
+
+// ---------- session ----------
+$("start").onclick = async () => {
+  try { ids = parseIds($("ids").value); } catch (e) { $("status").textContent = e.message; return; }
+  if (ids.length !== 4) { $("status").textContent = `Give exactly 4 tag ids (got ${ids.length}).`; return; }
+  tagSize = (parseFloat($("size").value) || 160) / 1000;
+  if (!design) { $("status").textContent = "The design is still loading, try again in a second."; return; }
+  if (!renderer) buildScene();
+  try {
+    session = await navigator.xr.requestSession("immersive-ar", {
+      requiredFeatures: ["hit-test"], optionalFeatures: ["camera-access", "anchors", "dom-overlay"],
+      domOverlay: { root: $("overlay") } });
+  } catch (e) { $("status").textContent = "AR could not start: " + e.message; return; }
+  detector = new AR.Detector({ dictionaryName: "APRILTAG_36h11" });
+  $("overlay").classList.add("on");
+  renderer.xr.setReferenceSpaceType("local");
+  await renderer.xr.setSession(session);
+  refSpace = renderer.xr.getReferenceSpace();
+  binding = renderer.xr.getBinding ? renderer.xr.getBinding() : new XRWebGLBinding(session, renderer.getContext());
+  const viewer = await session.requestReferenceSpace("viewer");
+  try { hitSource = await session.requestHitTestSource({ space: viewer, entityTypes: ["plane", "point"] }); }
+  catch (e) { hitSource = await session.requestHitTestSource({ space: viewer }); }
+  session.addEventListener("end", () => {
+    $("overlay").classList.remove("on"); hitSource = null; relock(); renderer.setAnimationLoop(null);
+  });
+  relock();
+  $("hud").innerHTML = "Move the phone slowly to find the table<small>then aim at the middle of the 4 tags</small>";
+  let warnedCamera = false;
+  renderer.setAnimationLoop((t, frame) => {
+    if (frame && hitSource) {
+      const hits = frame.getHitTestResults(hitSource);
+      const hp = hits.length && hits[0].getPose(refSpace);
+      if (hp) { lastHit = Array.from(hp.transform.matrix); lastHitAt = performance.now(); reticle.matrix.fromArray(lastHit); }
+      reticle.visible = !rect && performance.now() - lastHitAt < HIT_GRACE_MS;
+      const pose = frame.getViewerPose(refSpace);
+      const view = pose && pose.views[0];
+      if (!rect && view && performance.now() - lastDetect > DETECT_EVERY_MS) {
+        lastDetect = performance.now();
+        if (!view.camera) {
+          if (!warnedCamera) $("hud").innerHTML = "This browser does not give AR pages the camera image<small>needs Chrome 107+ on Android with ARCore</small>";
+          warnedCamera = true;
+        } else if (!lastHit) {
+          $("hud").innerHTML = "Move the phone slowly to find the table<small>the ring has to sit on the surface the tags are on</small>";
+        } else {
+          const r = detectRect(frame, view);
+          if (typeof r === "string") $("hud").innerHTML = r + "<small>keep the ring on the table, between the tags</small>";
+          else lock(frame, r);
+        }
+      }
+      if (rect && anchor && frame.trackedAnchors && frame.trackedAnchors.has(anchor)) {
+        const ap = frame.getPose(anchor.anchorSpace, refSpace);
+        if (ap) group.matrix.fromArray(ap.transform.matrix);
+      }
+    }
+    renderer.render(scene, camera);
+  });
+};
+
+$("overlay").addEventListener("beforexrselect", (e) => { if (e.target.closest("button, input, label")) e.preventDefault(); });
+$("o-minus").onclick = () => { scale = nextNiceScale(scale, -1); place(); };
+$("o-plus").onclick = () => { scale = nextNiceScale(scale, +1); place(); };
+$("o-fit").onclick = () => { scale = fitS; place(); };
+$("o-turn").onclick = () => {
+  turns = (turns + 1) % 4;
+  scale = fitS = fitScale(design.w, design.d, rect.width, rect.height, turns);
+  place();
+};
+$("o-relock").onclick = relock;
+$("o-exit").onclick = () => session && session.end();
+
+// Desktop check without AR: __tagar.simulate(tagCentres, normal, tagEdge) locks onto fake tag
+// centres and renders the table from above; press("o-plus") etc. drive the real buttons.
+window.__tagar = {
+  simulate(centres = [[-0.4, 0, -0.25], [0.4, 0, -0.25], [0.4, 0, 0.25], [-0.4, 0, 0.25]], n = [0, 1, 0], edge = 0.16) {
+    if (!renderer) buildScene();
+    $("overlay").classList.add("on");
+    const r = fitRectangle(centres, n);
+    r.edge = edge;
+    lock({}, r);
+    renderer.domElement.style.cssText = "position:fixed;inset:0;z-index:0";
+    renderer.setSize(innerWidth, innerHeight);
+    camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 50);
+    camera.position.set(r.center[0], r.center[1] + 1.6, r.center[2] + 0.001);
+    camera.up.set(0, 0, -1); camera.lookAt(...r.center);
+    scene.background = new THREE.Color(0x8a9099);
+    renderer.setAnimationLoop(() => renderer.render(scene, camera));
+    return this.state();
+  },
+  press(id) { $(id).click(); return this.state(); },
+  state() {
+    return { locked: !!rect, scale, fit: fitS, turns, label: scaleLabel(scale),
+             buttons: ["o-minus", "o-fit", "o-plus", "o-turn", "o-relock"].filter((id) => !$(id).hidden),
+             hud: $("hud").textContent };
+  },
+};
+</script>
+</body>
+</html>
