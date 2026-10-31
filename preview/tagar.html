@@ -73,7 +73,7 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
   <div class="card">
     <p class="label">How it works</p>
     <ol>
-      <li>Print AprilTags (36h11, from <code>scripts/make_tags.py</code>). <b>2 tags</b> (ids 0 and 1): lay them at <b>opposite corners</b> of a rectangle, both the same way up. <b>4 tags</b> (ids 0-3): one at each corner.</li>
+      <li>Print AprilTags (36h11, from <code>scripts/make_tags.py</code>). <b>2 tags</b> (ids 0 and 1, or any 2 if only 2 are in view): lay them at <b>opposite corners</b> of a rectangle, both the same way up. <b>4 tags</b> (ids 0-3): one at each corner.</li>
       <li>Press <b>Start AR</b>, move the phone until the ring sits on the surface, then aim between the tags so all of them are in view.</li>
       <li>The scanned roof snaps into the rectangle, scaled to fit, with one solar panel on it. It is pinned to the table: walk around it, it stays put. Move the tags and it follows them.</li>
       <li><b>Long-press the panel</b> and drag to move it; with it picked up, put a <b>second finger</b> down and twist to turn it. <b>Look</b> changes the panel type, <b>−</b> / <b>+</b> / <b>Fit</b> set the scale.</li>
@@ -121,7 +121,7 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
 import * as THREE from "three";
 import { parseIds } from "./tagcheck.js?v=1";
 import { pixelRay, rayPlane, fitRectangle, fitFromTwo, tagAxis, alignAxes, rectMoved, tagEdge, fitScale, bestTurns,
-         scaleLabel, nextNiceScale, isStable, downsample, pickTags } from "./tagrect.js?v=2";
+         scaleLabel, nextNiceScale, isStable, downsample, pickTags, averageTwo, tagsMoved } from "./tagrect.js?v=3";
 import { PANEL_LOOKS, lookByKey, nextLook, cellLayout, panelHit, twistDelta, isLongPress, clampToBox,
          yawDeg } from "./panel.js?v=1";
 
@@ -332,10 +332,10 @@ function detectRect(frame, view) {
   const img = downsample(pixels, cam.w, cam.h, flipY);
   const found = detector.detect(img);
   // a mirrored tag never decodes, so the row order that decodes is the upright one
-  if (!found.length) { if (!flipKnown) flipY = !flipY; return "Aim at the tags so all 4 are in view"; }
+  if (!found.length) { if (!flipKnown) flipY = !flipY; return `Aim at the tags so all ${ids.length} are in view`; }
   flipKnown = true;
   const pick = pickTags(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) })), ids);
-  if (!pick.ok) return pick.why + (pick.found ? ": step back so all 4 fit, or move closer if a far one is small" : "");
+  if (!pick.ok) return pick.why + (pick.found ? `: step back so all ${ids.length} fit, or move closer if a far one is small` : "");
   // before the lock: the hit-test plane; after it: the table the tags were found on
   const hp = lastHit, n = rect ? rect.n : [hp[4], hp[5], hp[6]], p0 = rect ? rect.center : [hp[12], hp[13], hp[14]];
   const proj = Array.from(view.projectionMatrix), pose = Array.from(view.transform.matrix);
@@ -348,11 +348,22 @@ function detectRect(frame, view) {
     axes.push(tagAxis(world));
   }
   let r;
-  try { r = ids.length === 2 ? fitFromTwo(centers, axes, n) : fitRectangle(centers, n); } catch (e) { return e.message; }
+  if (ids.length === 2) {
+    // history holds raw 2-tag frames here: fit from their mean once they agree
+    history.push({ centers, axes });
+    if (history.length > 8) history.shift();
+    const avg = averageTwo(history);
+    if (!avg) return "Both tags found, hold still…";
+    try { r = fitFromTwo(avg.centers, avg.axes, n); } catch (e) { history = []; return e.message; }
+    r.tags = avg.centers;
+  } else {
+    try { r = fitRectangle(centers, n); } catch (e) { return e.message; }
+  }
   if (r.angleErrDeg > MAX_ANGLE_ERR)
     return ids.length === 2 ? `The 2 tags point ${r.angleErrDeg.toFixed(0)}° apart: lay them the same way up`
                             : `Tags are not a rectangle (a corner is off by ${r.angleErrDeg.toFixed(0)}°): square them up`;
   r.edge = edges.reduce((a, b) => a + b, 0) / edges.length;
+  if (ids.length === 2) return r;
   history.push(r);
   if (history.length > 6) history.shift();
   return isStable(history) ? r : "All 4 tags found, hold still…";
@@ -433,7 +444,10 @@ $("start").onclick = async () => {
         // keep watching the tags: a stable new rectangle somewhere else means they were moved
         lastDetect = performance.now();
         const r = detectRect(frame, view);
-        if (typeof r !== "string" && rectMoved(rect, r)) lock(frame, r, true);
+        // 2 tags: judge by where the tags are, their fitted size and angle still wobble a little
+        const moved = typeof r !== "string" &&
+          (ids.length === 2 ? tagsMoved(rect.tags, r.tags) || rectMoved(rect, r, 0.05, 8) : rectMoved(rect, r));
+        if (moved) lock(frame, r, true);
       } else if (!rect && view && performance.now() - lastDetect > DETECT_EVERY_MS) {
         lastDetect = performance.now();
         if (!view.camera) {

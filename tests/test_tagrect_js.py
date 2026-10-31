@@ -256,7 +256,8 @@ def test_tagar_page_wiring():
         for name in re.findall(r"\w+", names):
             assert re.search(rf"export (?:function|const) {name}\b", js), name
     for feature in ('"hit-test"', '"camera-access"', '"anchors"', "createAnchor", "getCameraImage", 'id="touch"',
-                    "pointerdown", "pointermove", "pointerup", "fitFromTwo", "rectMoved(rect, r)", "lock(frame, r, true)"):
+                    "pointerdown", "pointermove", "pointerup", "fitFromTwo", "rectMoved(rect, r)", "lock(frame, r, true)",
+                    "averageTwo(history)", "tagsMoved(rect.tags, r.tags)"):
         assert feature in html, feature
     assert 'href="tagar.html"' in (PREVIEW / "index.html").read_text(encoding="utf-8")
 
@@ -351,3 +352,51 @@ def test_two_tags_along_one_side_are_refused(tmp_path, node_available):
     table_photo(tmp_path, ids=(0, 1), corners=(0, 1), want=(0, 1))     # same long side
     with pytest.raises(RuntimeError, match="opposite corners"):
         chain(tmp_path)
+
+
+def test_pick_tags_takes_any_two_in_two_tag_mode(node_available):
+    m = lambda i: f"{{id: {i}, corners: [[{i},0],[1,0],[1,1],[0,1]]}}"
+    r = run(f"R.pickTags([{m(2)},{m(0)}], [0,1])")                 # diagonal pair of a 4-tag sheet
+    assert r["ok"] and [t["id"] for t in r["tags"]] == [0, 2]
+    assert run(f"R.pickTags([{m(1)},{m(0)}], [0,1])")["tags"][0]["id"] == 0
+    assert not run(f"R.pickTags([{m(0)}], [0,1])")["ok"]
+    assert not run(f"R.pickTags([{m(0)},{m(5)},{m(7)}], [0,1])")["ok"]   # 3 tags: which 2 is unclear
+    assert not run(f"R.pickTags([{m(5)},{m(5)}], [0,1])")["ok"]          # same id twice
+    assert not run(f"R.pickTags([{m(0)},{m(2)}], [0,1,2,3])")["ok"]      # 4-tag mode stays strict
+
+
+def test_average_two_waits_for_agreement_then_averages(node_available):
+    o = lambda dx, deg: (f"{{centers: [[{dx},0,0],[0.8,0,0.5]], axes: [[{np.cos(np.radians(deg))},0,"
+                         f"{np.sin(np.radians(deg))}],[2,0,0]]}}")
+    assert run(f"R.averageTwo([{o(0, 0)},{o(0, 0)},{o(0, 0)}])") is None             # too few
+    a = run(f"R.averageTwo([{o(0.004, 3)},{o(-0.004, -3)},{o(0.002, 2)},{o(-0.002, -2)}])")
+    assert np.allclose(a["centers"], [[0, 0, 0], [0.8, 0, 0.5]], atol=1e-12)
+    assert np.allclose(a["axes"], [[1, 0, 0], [1, 0, 0]], atol=1e-12)                 # unit mean
+    assert run(f"R.averageTwo([{o(0.012, 0)},{o(-0.004, 0)},{o(-0.004, 0)},{o(-0.004, 0)}])") is None
+    assert run(f"R.averageTwo([{o(0, 9)},{o(0, -3)},{o(0, -3)},{o(0, -3)}])") is None  # one axis 9 deg off
+    assert run(f"R.averageTwo([{o(0.5, 40)},{o(0, 0)},{o(0, 0)},{o(0, 0)},{o(0, 0)}])") is not None  # only the last 4
+
+
+def test_tags_moved(node_available):
+    assert run("R.tagsMoved([[0,0,0],[0.8,0,0.5]], [[0.01,0,0],[0.8,0,0.51]])") is False
+    assert run("R.tagsMoved([[0,0,0],[0.8,0,0.5]], [[0.03,0,0],[0.8,0,0.5]])") is True
+    assert run("R.tagsMoved([[0,0,0],[0.8,0,0.5]], [[0,0,0],[0.8,0,0.53]])") is True
+
+
+def test_two_tag_fit_is_steady_under_detection_noise(node_available):
+    """Phone-like noise (3 mm centres, 3 deg tag edges): the averaged fit locks often and its size holds."""
+    res = run("""(() => {
+      let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+      const g = () => { let s = 0; for (let i = 0; i < 6; i++) s += rnd(); return s - 3; };
+      const ax = () => { const a = (g() * 3 * Math.PI) / 180; return [Math.cos(a), 0, Math.sin(a)]; };
+      const H = [], w = []; let locks = 0;
+      for (let f = 0; f < 400; f++) {
+        H.push({ centers: [[-0.4 + g() * 0.003, 0, -0.25 + g() * 0.003], [0.4 + g() * 0.003, 0, 0.25 + g() * 0.003]], axes: [ax(), ax()] });
+        if (H.length > 8) H.shift();
+        const a = R.averageTwo(H);
+        if (a) { locks++; w.push(R.fitFromTwo(a.centers, a.axes, [0, 1, 0]).width); }
+      }
+      return { locks, w };
+    })()""")
+    assert res["locks"] > 100
+    assert np.std(res["w"]) < 0.008 and abs(np.mean(res["w"]) - 0.8) < 0.005

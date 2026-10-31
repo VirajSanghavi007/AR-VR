@@ -159,6 +159,9 @@ export function pickTags(markers, ids) {
   for (const m of markers) if (ids.includes(m.id)) seen.set(m.id, (seen.get(m.id) || []).concat([m]));
   const dup = [...seen].filter(([, l]) => l.length > 1).map(([id]) => id);
   if (dup.length) return { ok: false, why: `id ${dup.join(", ")} seen twice: every tag needs its own id` };
+  // 2-tag mode: any 2 tags will do (e.g. ids 0 and 2 of a 4-tag sheet), when exactly 2 are in view
+  if (ids.length === 2 && ids.some((id) => !seen.has(id)) && markers.length === 2 && markers[0].id !== markers[1].id)
+    return { ok: true, tags: markers.slice().sort((a, b) => a.id - b.id) };
   const missing = ids.filter((id) => !seen.has(id));
   if (missing.length) return { ok: false, found: ids.length - missing.length, why: `${ids.length - missing.length} of ${ids.length} tags in view, missing id ${missing.join(", ")}` };
   return { ok: true, tags: ids.map((id) => seen.get(id)[0]) };
@@ -203,3 +206,19 @@ export function rectMoved(a, b, tol = 0.02, tolDeg = 3) {
   return norm(sub(a.center, b.center)) > tol || Math.abs(a.width - b.width) > tol ||
     Math.abs(a.height - b.height) > tol || turn > tolDeg;
 }
+
+// 2-tag mode, per frame obs = {centers: [c0, c1], axes: [a0, a1]}. A single small tag's edge direction
+// jitters by a few degrees, which swings the fitted size by centimetres, so the fit uses the mean of
+// the last `need` frames, once every centre is within tol metres and every axis within tolDeg of it.
+export function averageTwo(obs, need = 4, tol = 0.01, tolDeg = 6) {
+  if (obs.length < need) return null;
+  const last = obs.slice(-need), cosTol = Math.cos((tolDeg * Math.PI) / 180);
+  const centers = [0, 1].map((k) => mean(last.map((o) => o.centers[k])));
+  const axes = [0, 1].map((k) => unit(last.map((o) => unit(o.axes[k])).reduce(add, [0, 0, 0])));
+  const ok = last.every((o) => [0, 1].every((k) =>
+    norm(sub(o.centers[k], centers[k])) < tol && dot(unit(o.axes[k]), axes[k]) > cosTol));
+  return ok ? { centers, axes } : null;
+}
+
+// Did any tag centre move more than tol metres (same order in both lists)?
+export const tagsMoved = (a, b, tol = 0.02) => a.some((p, i) => norm(sub(p, b[i])) > tol);
