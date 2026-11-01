@@ -81,7 +81,7 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
   <div class="card">
     <p class="label">How it works</p>
     <ol>
-      <li>Print AprilTags (36h11, from <code>scripts/make_tags.py</code>). <b>2 tags</b> (ids 0 and 1, or any 2 if only 2 are in view): lay them at <b>opposite corners</b> of a rectangle, both the same way up. <b>4 tags</b> (ids 0-3): one at each corner.</li>
+      <li>Print AprilTags (36h11, from <code>scripts/make_tags.py</code>). <b>2 tags</b> (ids 0 and 1, or any 2 if only 2 are in view): lay them at <b>opposite corners</b> of a rectangle, each tag any way up. <b>4 tags</b> (ids 0-3): one at each corner.</li>
       <li>Press <b>Start AR</b>, move the phone until the ring sits on the surface, then aim between the tags so all of them are in view.</li>
       <li>The scanned roof snaps into the rectangle, scaled to fit, with one solar panel on it. It is pinned to the table: walk around it, it stays put. Move the tags and it follows them.</li>
       <li><b>Long-press the panel</b> and drag to move it; with it picked up, put a <b>second finger</b> down and twist to turn it. <b>Look</b> changes the panel type, <b>−</b> / <b>+</b> / <b>Fit</b> set the scale.</li>
@@ -461,7 +461,7 @@ function detectRect(frame, view) {
     try { r = fitRectangle(centers, n); } catch (e) { return e.message; }
   }
   if (r.angleErrDeg > MAX_ANGLE_ERR)
-    return ids.length === 2 ? `The 2 tags point ${r.angleErrDeg.toFixed(0)}° apart: lay them the same way up`
+    return ids.length === 2 ? `The 2 tags are off by ${r.angleErrDeg.toFixed(0)}°: lay them flat on the same surface, square to each other`
                             : `Tags are not a rectangle (a corner is off by ${r.angleErrDeg.toFixed(0)}°): square them up`;
   r.edge = edges.reduce((a, b) => a + b, 0) / edges.length;
   if (ids.length === 2) return r;

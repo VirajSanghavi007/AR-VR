@@ -190,14 +190,23 @@ export function pickTags(markers, ids) {
 // (top-left, top-right, bottom-right, bottom-left as printed), averaged over top and bottom edges.
 export const tagAxis = (corners) => unit(add(sub(corners[1], corners[0]), sub(corners[2], corners[3])));
 
-// Rectangle from 2 tags at opposite corners, both laid the same way up: the tags' own edges give
+// A tag turned by a whole quarter turn still has the same square, so the rectangle does not care
+// which way up a tag was laid. Turn b by 0, 90, 180 or 270 degrees about n, whichever lands closest to a.
+export function turnToward(b, a, n) {
+  let best = b;
+  for (const c of [cross(n, b), mul(b, -1), mul(cross(n, b), -1)]) if (dot(c, a) > dot(best, a)) best = c;
+  return best;
+}
+
+// Rectangle from 2 tags at opposite corners, each laid any way up: the tags' own edges give
 // the rectangle's directions, the diagonal between their centres gives its size. Same result shape
-// as fitRectangle; angleErrDeg is how far apart the two tags' directions are.
+// as fitRectangle; angleErrDeg is how far the two tags' directions are from a whole number of quarter turns apart.
 export function fitFromTwo(centers, axes, n) {
   if (centers.length !== 2 || axes.length !== 2) throw new Error(`need 2 tag points, got ${centers.length}`);
   n = unit(n);
   const flat = (a) => sub(a, mul(n, dot(a, n)));
-  const a0 = unit(flat(axes[0])), a1 = unit(flat(axes[1]));
+  const a0 = unit(flat(axes[0]));
+  const a1 = turnToward(unit(flat(axes[1])), a0, n);
   const angleErrDeg = (Math.acos(Math.max(-1, Math.min(1, dot(a0, a1)))) * 180) / Math.PI;
   const s = add(a0, a1);
   let u = norm(s) > 1e-6 ? unit(s) : a0, v = cross(u, n);

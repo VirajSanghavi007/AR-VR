@@ -430,3 +430,24 @@ def test_level_normal_snaps_a_near_vertical_normal(node_available):
     assert np.allclose(run("R.levelNormal([0, 5, 0])"), [0, 1, 0])
     assert np.allclose(run("R.levelNormal([1, 0, 0])"), [1, 0, 0])
     assert run("R.levelNormal([0.1, 1, 0], 3)") != [0, 1, 0]           # custom tolerance
+
+
+def test_fit_from_two_accepts_any_quarter_turn(node_available):
+    c = "[[-0.4,0.1,-0.25],[0.4,0.1,0.25]]"
+    base = run(f"R.fitFromTwo({c}, [[1,0,0],[1,0,0]], [0,1,0])")
+    for ax1 in ([0, 0, 1], [-1, 0, 0], [0, 0, -1]):
+        r = run(f"R.fitFromTwo({c}, [[1,0,0],{json.dumps(ax1)}], [0,1,0])")
+        assert r["angleErrDeg"] == pytest.approx(0, abs=1e-6)
+        assert r["width"] == pytest.approx(base["width"]) and r["height"] == pytest.approx(base["height"])
+        assert np.allclose(r["u"], base["u"])
+    # a quarter turn plus 4 degrees of disagreement is still reported as 4
+    r = run(f"R.fitFromTwo({c}, [[1,0,0],[{np.sin(np.radians(4))},0,{np.cos(np.radians(4))}]], [0,1,0])")
+    assert r["angleErrDeg"] == pytest.approx(4, abs=1e-6)
+    # 45 degrees is as wrong as it gets
+    r = run(f"R.fitFromTwo({c}, [[1,0,0],[1,0,1]], [0,1,0])")
+    assert r["angleErrDeg"] == pytest.approx(45, abs=1e-6)
+
+
+def test_turn_toward_picks_the_closest_quarter_turn(node_available):
+    for b in ([1, 0, 0], [0, 0, 1], [-1, 0, 0], [0, 0, -1]):
+        assert np.allclose(run(f"R.turnToward({json.dumps(b)},[1,0,0],[0,1,0])"), [1, 0, 0])
