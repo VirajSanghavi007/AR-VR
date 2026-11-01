@@ -7,11 +7,11 @@ export const PANEL_LOOKS = [
   // Standard module: dark mono cells, silver frame.
   { key: "standard", name: "Standard", w: 1.038, d: 1.755, cols: 6, rows: 20, halfCut: true,
     cell: "#1a2232", busbar: "#5c6878", gap: "#e9edf1", frame: "#b9c0c8", frameMm: 30, watts: 400 },
-  // BIPV: frameless, the face is a brick-wall texture so it blends into the surrounding architecture.
-  // Size matches the picture (815 x 1130 px, 0.72) so the bricks are not stretched. A patterned face
+  // BIPV: frameless, the face is a shingle-roof texture so it blends into the surrounding architecture.
+  // Size matches the picture (800 x 1120 px, 0.714) so the bricks are not stretched. A patterned face
   // gives up output: ~120 W/m2 against ~220 W/m2 for a plain mono module.
-  { key: "bipv", name: "BIPV brick", w: 1.1, d: 1.525, cols: 1, rows: 1, halfCut: false,
-    cell: "#8a3f2b", busbar: "#8a3f2b", gap: null, frame: "#6b3a2a", frameMm: 0, texture: "bipv_brick.jpg", watts: 200,
+  { key: "bipv", name: "BIPV shingle", w: 1.1, d: 1.54, cols: 1, rows: 1, halfCut: false,
+    cell: "#8a3f2b", busbar: "#8a3f2b", gap: null, frame: "#6b3a2a", frameMm: 0, texture: "bipv_shingle.jpg", watts: 200,
     // glass-glass laminate (real facade modules are ~10-12 mm), a dark fired-ceramic border round the
     // printed face, and a teal glass edge; the mortar joints read as shallow relief under the glass
     thickMm: 12, borderMm: 14, edge: "#35504c", relief: 1.6 },

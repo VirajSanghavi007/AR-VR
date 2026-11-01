@@ -89,7 +89,7 @@ def test_watts_are_plausible_for_the_area(node_available):
     per_m2 = {l["key"]: l["watts"] / (l["w"] * l["d"]) for l in looks}
     assert 200 <= per_m2["standard"] <= 240            # mono PERC around 21-23 %
     assert 90 <= per_m2["bipv"] <= 150                  # patterned BIPV face gives up a lot
-    assert run('S.caption(P.lookByKey("bipv"), 0)') == "BIPV brick panel · 1.10 × 1.52 m · 0° tilt · ~200 W typical"
+    assert run('S.caption(P.lookByKey("bipv"), 0)') == "BIPV shingle panel · 1.10 × 1.54 m · 0° tilt · ~200 W typical"
 
 
 def test_composite_full_phone_frame_smoke(node_available):

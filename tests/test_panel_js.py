@@ -30,7 +30,7 @@ def test_looks_are_real_module_sizes(node_available):
     assert [l["key"] for l in looks] == ["standard", "bipv"]
     for l in looks:
         assert 0.9 < l["w"] < 1.2 and 1.4 < l["d"] < 2.4 and l["d"] > l["w"]    # portrait, metres
-    assert run('P.lookByKey("bipv").name') == "BIPV brick"
+    assert run('P.lookByKey("bipv").name') == "BIPV shingle"
     assert [l["key"] for l in looks if l.get("texture")] == ["bipv"]
     assert run('P.lookByKey("nope").key') == looks[0]["key"]
 
@@ -67,7 +67,7 @@ def test_bipv_is_one_frameless_textured_face_in_the_pictures_proportions(node_av
     look = run('P.lookByKey("bipv")')
     img = Image.open(PREVIEW / look["texture"])
     assert look["frameMm"] == 0 and (look["cols"], look["rows"]) == (1, 1)
-    assert look["w"] / look["d"] == pytest.approx(img.width / img.height, abs=0.005)      # bricks not stretched
+    assert look["w"] / look["d"] == pytest.approx(img.width / img.height, abs=0.005)      # shingles not stretched
     assert run('P.cellLayout(P.lookByKey("bipv"))') == [{"x": 0, "y": 0, "w": 1, "h": 1}]
 
 
