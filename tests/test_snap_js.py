@@ -78,6 +78,25 @@ def test_caption_names_type_size_tilt_and_power(node_available):
     assert run(f"S.caption({json.dumps(look)}, 15)") == "Standard panel · 1.04 × 1.75 m · 15° tilt · ~400 W typical"
 
 
+def test_caption_for_an_array_counts_panels_and_peak_power(node_available):
+    look = {"name": "Standard", "w": 1.038, "d": 1.755, "watts": 400}
+    assert run(f"S.caption({json.dumps(look)}, 15, 6)") == "6 × Standard panels · 1.04 × 1.75 m each · 15° tilt · 2.4 kW peak"
+    # with sun hours: 6 x 400 W x 5 h x 0.8 = 9.6 kWh a day
+    assert run(f"S.caption({json.dumps(look)}, 15, 6, 5)").endswith("2.4 kW peak · ~9.6 kWh/day")
+    assert run(f"S.caption({json.dumps(look)}, 0, 1, 4)") == "Standard panel · 1.04 × 1.75 m · 0° tilt · ~400 W typical · ~1.3 kWh/day"
+    assert run(f"S.caption({json.dumps(look)}, 0, 2, 5, 1)") == \
+        "2 × Standard panels · 1.04 × 1.75 m each · 0° tilt · 0.8 kW peak · ~4.0 kWh/day"     # no losses
+    assert run(f"S.caption({json.dumps(look)}, 0, 1, 0.5)").endswith("~0.2 kWh/day")       # a dull site still shows
+
+
+def test_caption_energy_matches_panel_energy(node_available):
+    # integration: the photo caption and the HUD (panel.js energy) give the same kWh a day
+    for n, sun in ((1, 5), (7, 4.5), (12, 6)):
+        cap = run(f'S.caption(P.lookByKey("standard"), 15, {n}, {sun})')
+        kwh = run(f'P.energy({n}, P.lookByKey("standard").watts, {sun}).kwhDay')
+        assert cap.endswith(f"~{kwh:.1f} kWh/day"), (cap, kwh)
+
+
 def test_shot_name_is_local_time_zero_padded(node_available):
     assert run("S.shotName(new Date(2026, 0, 2, 3, 4, 5))") == "solar-preview-20260102-030405.png"
     assert run("S.shotName(new Date(2026, 10, 21, 13, 45, 59))") == "solar-preview-20261121-134559.png"
@@ -109,3 +128,4 @@ def test_page_wires_the_photo_button():
         assert hook in html, hook
     assert re.search(r"if \(view && wantShot\) takeShot\(frame, view\);", html)
     assert "~${l.watts} W" in html
+    assert "caption(lookByKey(look), TILTS[tiltKey], panels.length, sunHours())" in html

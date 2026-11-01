@@ -1,4 +1,4 @@
-"""Tabletop AR on 4 AprilTags: unit (preview/tagrect.js through node), smoke (tagar.html wiring),
+"""Tabletop AR on 2, 3 or 4 AprilTags: unit (preview/tagrect.js through node), smoke (tagar.html wiring),
 integration (a synthetic camera photo of 4 tags on a table goes through the page's real chain:
 bottom-up readPixels buffer, downsample, js-aruco2 decode, pixel rays, table plane, rectangle fit)."""
 import json
@@ -179,16 +179,58 @@ def test_downsample_averages_blocks_and_flips(node_available):
     assert run("(() => { const d = R.downsample(new Uint8Array(12), 3, 1, false, 2); return [d.factor, d.width]; })()") == [2, 1]
 
 
-def test_pick_tags(node_available):
-    m = lambda i: f"{{id: {i}, corners: [[0,0],[1,0],[1,1],[0,1]]}}"
-    ok = run(f"R.pickTags([{m(3)},{m(9)},{m(1)},{m(0)},{m(2)}], [0,1,2,3])")
-    assert ok["ok"] and [t["id"] for t in ok["tags"]] == [0, 1, 2, 3]
-    miss = run(f"R.pickTags([{m(0)},{m(2)}], [0,1,2,3])")
-    assert not miss["ok"] and miss["found"] == 2 and "missing id 1, 3" in miss["why"]
-    assert run(f"R.pickTags([], [0,1,2,3])")["found"] == 0
-    far = "{id: 0, corners: [[9,9],[10,9],[10,10],[9,10]]}"            # the same id printed twice, far apart
-    dup = run(f"R.pickTags([{m(0)},{far},{m(1)},{m(2)},{m(3)}], [0,1,2,3])")
-    assert not dup["ok"] and "id 0 seen twice" in dup["why"]
+def sq(i, x=0, size=1):
+    return f"{{id: {i}, corners: [[{x},0],[{x + size},0],[{x + size},{size}],[{x},{size}]]}}"
+
+
+def test_choose_tags_takes_2_3_or_4_of_any_ids(node_available):
+    for ids in ((7, 2), (30, 4, 11), (9, 0, 5, 3)):
+        r = run(f"R.chooseTags([{','.join(sq(i, 5 * k) for k, i in enumerate(ids))}])")
+        assert r["ok"] and r["found"] == len(ids) and [t["id"] for t in r["tags"]] == sorted(ids)
+    one = run(f"R.chooseTags([{sq(4)}])")
+    assert not one["ok"] and one["found"] == 1 and "1 tag in view" in one["why"]
+    none = run("R.chooseTags([])")
+    assert not none["ok"] and none["found"] == 0 and none["why"] == "No tags in view"
+
+
+def test_choose_tags_keeps_the_biggest_four(node_available):
+    five = [sq(1, 0, 3), sq(2, 10, 1), sq(3, 20, 5), sq(4, 30, 4), sq(5, 40, 2)]   # id 2 is the smallest
+    r = run(f"R.chooseTags([{','.join(five)}])")
+    assert r["ok"] and [t["id"] for t in r["tags"]] == [1, 3, 4, 5]
+    assert [t["id"] for t in run(f"R.chooseTags([{','.join(five)}], 2)")["tags"]] == [3, 4]
+
+
+def test_choose_tags_refuses_a_repeated_id(node_available):
+    dup = run(f"R.chooseTags([{sq(0)},{sq(0, 9)},{sq(1, 20)}])")      # the same id printed twice, far apart
+    assert not dup["ok"] and dup["found"] == 3 and "id 0 seen twice" in dup["why"]
+
+
+def test_most_seen_counts_only_recent_frames(node_available):
+    recent = "[{at: 0, n: 4}, {at: 1000, n: 2}, {at: 1600, n: 3}]"
+    assert run(f"R.mostSeen({recent}, 1500)") == 4
+    assert run(f"R.mostSeen({recent}, 1501)") == 3                    # the 4 is 1501 ms old
+    assert run(f"R.mostSeen({recent}, 2000, 400)") == 3
+    assert run("R.mostSeen([], 0)") == 0
+
+
+def test_fit_from_three_any_order_and_rotation(node_available):
+    a = np.radians(25)
+    R = np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]])
+    full = np.array([[-0.4, 0, -0.25], [0.4, 0, -0.25], [0.4, 0, 0.25], [-0.4, 0, 0.25]]) @ R.T + [1, 0.7, 2]
+    for drop in range(4):
+        for order in ((0, 1, 2), (2, 0, 1), (1, 2, 0), (2, 1, 0)):
+            three = np.delete(full, drop, axis=0)[list(order)].tolist()
+            r = run(f"R.fitFromThree({three}, [0, 1, 0])")
+            assert r["width"] == pytest.approx(0.8) and r["height"] == pytest.approx(0.5)
+            assert np.allclose(r["center"], [1, 0.7, 2]) and r["angleErrDeg"] < 1e-6
+            assert np.allclose(sorted(map(tuple, np.round(r["corners"], 9))), sorted(map(tuple, np.round(full, 9))))
+
+
+def test_fit_from_three_reports_a_skewed_corner(node_available):
+    r = run("R.fitFromThree([[0,0,0],[1,0,0],[0.2,0,0.5]], [0,1,0])")    # best corner ~80 deg, not 90
+    assert 5 < r["angleErrDeg"] < 20
+    with pytest.raises(RuntimeError, match="need 3"):
+        run("R.fitFromThree([[0,0,0],[1,0,0]], [0,1,0])")
 
 
 def test_tag_axis_follows_the_top_edge(node_available):
@@ -224,10 +266,36 @@ def test_fit_from_two_opposite_corners(node_available):
 def test_fit_from_two_refuses_bad_input(node_available):
     with pytest.raises(RuntimeError, match="need 2"):
         run("R.fitFromTwo([[0,0,0]], [[1,0,0]], [0,1,0])")
-    with pytest.raises(RuntimeError, match="opposite corners"):
-        run("R.fitFromTwo([[0,0,0],[0.8,0,0.01]], [[1,0,0],[1,0,0]], [0,1,0])")
-    with pytest.raises(RuntimeError, match="opposite corners"):
-        run("R.fitFromTwo([[0,0,0],[0.01,0,0.8]], [[1,0,0],[1,0,0]], [0,1,0])")
+    with pytest.raises(RuntimeError, match="need 2"):
+        run("R.fitFromTwo([[0,0,0],[1,0,0]], [[1,0,0]], [0,1,0])")
+    with pytest.raises(RuntimeError, match="on top of each other"):
+        run("R.fitFromTwo([[0,0,0],[0.01,0,0.01]], [[1,0,0],[1,0,0]], [0,1,0])")
+
+
+def test_fit_from_two_side_by_side_gives_the_square_on_their_line(node_available):
+    ax = "[[1,0,0],[1,0,0]]"
+    for c in ("[[0,0,0],[0.8,0,0.01]]", "[[0,0,0],[0.01,0,0.8]]", "[[0.8,0,0],[0,0,0]]"):
+        r = run(f"R.fitFromTwo({c}, {ax}, [0,1,0])")
+        L = np.linalg.norm(np.subtract(*json.loads(c)))
+        assert r["side"] is True and r["width"] == pytest.approx(L) and r["height"] == pytest.approx(L)
+        assert np.allclose(r["center"], np.mean(json.loads(c), axis=0))            # no toward: on the line
+        assert np.allclose(np.cross(r["u"], r["n"]), r["v"])
+    # toward picks the side: the square grows away from the line toward that point
+    for tz, cz in ((1, 0.4), (-2, -0.4)):
+        r = run(f"R.fitFromTwo([[-0.4,0,0],[0.4,0,0]], {ax}, [0,1,0], [0.1,0.5,{tz}])")
+        assert np.allclose(r["center"], [0, 0, cz])
+        assert np.allclose(sorted(map(tuple, np.round(r["corners"], 9))),
+                           sorted([(-0.4, 0, 0), (-0.4, 0, 2 * cz), (0.4, 0, 0), (0.4, 0, 2 * cz)]))
+    # toward exactly on the line still picks a side
+    r = run(f"R.fitFromTwo([[-0.4,0,0],[0.4,0,0]], {ax}, [0,1,0], [3,0,0])")
+    assert abs(r["center"][2]) == pytest.approx(0.4)
+
+
+def test_side_ratio_is_the_cutoff(node_available):
+    k = run("R.SIDE_RATIO")
+    assert run(f"R.fitFromTwo([[0,0,0],[1,0,{k * 0.99}]], [[1,0,0],[1,0,0]], [0,1,0])").get("side") is True
+    assert "side" not in run(f"R.fitFromTwo([[0,0,0],[1,0,{k * 1.01}]], [[1,0,0],[1,0,0]], [0,1,0])")
+    assert "side" not in run("R.fitFromTwo([[0,0,0],[1,0,0.2]], [[1,0,0],[1,0,0]], [0,1,0])")   # a 1 x 0.2 strip is a diagonal
 
 
 def test_align_axes_and_rect_moved(node_available):
@@ -258,7 +326,9 @@ def test_tagar_page_wiring():
             assert re.search(rf"export (?:function|const) {name}\b", js), name
     for feature in ('"hit-test"', '"camera-access"', '"anchors"', "createAnchor", "getCameraImage", 'id="touch"',
                     "pointerdown", "pointermove", "pointerup", "fitFromTwo", "rectMoved(rect, r)", "lock(frame, r, true)",
-                    "averageTwo(history)", "tagsMoved(rect.tags, r.tags)"):
+                    "averageTwo(history)", "tagsMoved(rect.tags, r.tags)", "chooseTags(", "fitFromThree(",
+                    "mostSeen(", "renderer.resetState()", "shadowMap.enabled = true", "ShadowMaterial",
+                    "buildRack(", "mountParts("):
         assert feature in html, feature
     assert 'url=tagar.html' in (PREVIEW / "index.html").read_text(encoding="utf-8")   # the site root opens the AR
 
@@ -274,7 +344,7 @@ const raw = fs.readFileSync(process.argv[3]);
 import(require("url").pathToFileURL(process.argv[1] + "/tagrect.js").href).then((R) => {
   const img = R.downsample(new Uint8Array(raw.buffer, raw.byteOffset, raw.length), job.w, job.h, true, job.maxPixels);
   const found = new AR.Detector({ dictionaryName: "APRILTAG_36h11" }).detect(img);
-  const pick = R.pickTags(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) })), job.ids);
+  const pick = R.chooseTags(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) })));
   if (!pick.ok) { console.log(JSON.stringify(pick)); return; }
   const n = [job.hit[4], job.hit[5], job.hit[6]], p0 = [job.hit[12], job.hit[13], job.hit[14]];
   const centres = [], edges = [], axes = [];
@@ -284,17 +354,18 @@ import(require("url").pathToFileURL(process.argv[1] + "/tagrect.js").href).then(
     edges.push(R.tagEdge(w));
     axes.push(R.tagAxis(w));
   }
-  const rect = job.ids.length === 2 ? R.fitFromTwo(centres, axes, n) : R.fitRectangle(centres, n);
-  console.log(JSON.stringify({ ok: true, factor: img.factor, rect, edges }));
+  const k = centres.length;
+  const rect = k === 2 ? R.fitFromTwo(centres, axes, n, job.toward) : k === 3 ? R.fitFromThree(centres, n) : R.fitRectangle(centres, n);
+  console.log(JSON.stringify({ ok: true, ids: pick.tags.map((t) => t.id), factor: img.factor, rect, edges }));
 });
 """
 
 CENTRES = {0: [-0.4, -0.25], 1: [0.4, -0.25], 2: [0.4, 0.25], 3: [-0.4, 0.25]}
 
 
-def table_photo(tmp_path, ids=(0, 1, 2, 3), max_pixels=2.6e6, corners=(0, 1, 2, 3), want=(0, 1, 2, 3)):
+def table_photo(tmp_path, ids=(0, 1, 2, 3), max_pixels=2.6e6, corners=(0, 1, 2, 3), toward=None):
     """Tags (0.16 m black square) at the given rectangle corners on the plane y = 0, upright along +x,
-    photographed from EYE; RGBA bottom-up. `want` = the ids the page is told to look for."""
+    photographed from EYE; RGBA bottom-up. `toward` = the side point for 2 tags side by side."""
     c2w = cam_to_world(EYE, TARGET)
     img = np.full((H, W), 170, np.uint8)
     for k, tid in zip(corners, ids):
@@ -309,7 +380,7 @@ def table_photo(tmp_path, ids=(0, 1, 2, 3), max_pixels=2.6e6, corners=(0, 1, 2, 
     rgba = cv2.cvtColor(img[::-1], cv2.COLOR_GRAY2RGBA)     # gl.readPixels rows start at the bottom
     (tmp_path / "frame.bin").write_bytes(rgba.tobytes())
     hit = np.eye(4)                                          # hit-test pose: table plane, y up
-    job = {"w": W, "h": H, "proj": col(projection()), "pose": col(c2w), "hit": col(hit), "maxPixels": max_pixels, "ids": list(want)}
+    job = {"w": W, "h": H, "proj": col(projection()), "pose": col(c2w), "hit": col(hit), "maxPixels": max_pixels, "toward": toward}
     (tmp_path / "job.json").write_text(json.dumps(job))
 
 
@@ -332,14 +403,23 @@ def test_table_photo_gives_the_true_rectangle(tmp_path, node_available):
     assert np.allclose(r["edges"], 0.16, atol=0.008)        # tag size check agrees with the print
 
 
-def test_table_photo_with_a_wrong_tag_is_refused(tmp_path, node_available):
-    table_photo(tmp_path, ids=(0, 1, 2, 7))
+def test_table_photo_with_any_ids_and_three_tags(tmp_path, node_available):
+    table_photo(tmp_path, ids=(21, 5, 13), corners=(1, 2, 3))           # corner 0 left empty
     r = chain(tmp_path)
-    assert r["ok"] is False and "missing id 3" in r["why"]
+    assert r["ok"] and r["ids"] == [5, 13, 21]
+    assert r["rect"]["width"] == pytest.approx(0.8, abs=0.01)
+    assert r["rect"]["height"] == pytest.approx(0.5, abs=0.01)
+    assert np.allclose(r["rect"]["center"], [0, 0, 0], atol=0.01)
+
+
+def test_table_photo_with_a_repeated_tag_is_refused(tmp_path, node_available):
+    table_photo(tmp_path, ids=(0, 1, 2, 0))
+    r = chain(tmp_path)
+    assert r["ok"] is False and "id 0 seen twice" in r["why"]
 
 
 def test_table_photo_with_two_tags_gives_the_true_rectangle(tmp_path, node_available):
-    table_photo(tmp_path, ids=(0, 1), corners=(0, 2), want=(0, 1))     # opposite corners
+    table_photo(tmp_path, ids=(8, 3), corners=(0, 2))                  # opposite corners, any ids
     r = chain(tmp_path)
     assert r["ok"]
     assert r["rect"]["width"] == pytest.approx(0.8, abs=0.01)
@@ -349,21 +429,14 @@ def test_table_photo_with_two_tags_gives_the_true_rectangle(tmp_path, node_avail
     assert r["rect"]["angleErrDeg"] < 2
 
 
-def test_two_tags_along_one_side_are_refused(tmp_path, node_available):
-    table_photo(tmp_path, ids=(0, 1), corners=(0, 1), want=(0, 1))     # same long side
-    with pytest.raises(RuntimeError, match="opposite corners"):
-        chain(tmp_path)
-
-
-def test_pick_tags_takes_any_two_in_two_tag_mode(node_available):
-    m = lambda i: f"{{id: {i}, corners: [[{i},0],[1,0],[1,1],[0,1]]}}"
-    r = run(f"R.pickTags([{m(2)},{m(0)}], [0,1])")                 # diagonal pair of a 4-tag sheet
-    assert r["ok"] and [t["id"] for t in r["tags"]] == [0, 2]
-    assert run(f"R.pickTags([{m(1)},{m(0)}], [0,1])")["tags"][0]["id"] == 0
-    assert not run(f"R.pickTags([{m(0)}], [0,1])")["ok"]
-    assert not run(f"R.pickTags([{m(0)},{m(5)},{m(7)}], [0,1])")["ok"]   # 3 tags: which 2 is unclear
-    assert not run(f"R.pickTags([{m(5)},{m(5)}], [0,1])")["ok"]          # same id twice
-    assert not run(f"R.pickTags([{m(0)},{m(2)}], [0,1,2,3])")["ok"]      # 4-tag mode stays strict
+def test_two_tags_along_one_side_give_the_square_away_from_the_camera(tmp_path, node_available):
+    # tags at the two front corners (z = 0.25, nearer EYE); the page passes toward = 2 * mid - eye
+    mid = np.array([0, 0, 0.25])
+    table_photo(tmp_path, ids=(0, 1), corners=(3, 2), toward=(2 * mid - EYE).tolist())
+    r = chain(tmp_path)
+    assert r["ok"] and r["rect"]["side"] is True
+    assert r["rect"]["width"] == pytest.approx(0.8, abs=0.01) and r["rect"]["height"] == pytest.approx(0.8, abs=0.01)
+    assert np.allclose(r["rect"]["center"], [0, 0, 0.25 - 0.4], atol=0.01)
 
 
 def test_average_two_waits_for_agreement_then_averages(node_available):
@@ -416,9 +489,9 @@ def test_merge_nested_keeps_the_biggest_outline(node_available):
     assert "c" not in run(f"R.mergeNested([{big}])")[0]
 
 
-def test_pick_tags_ignores_a_nested_outline(node_available):
+def test_choose_tags_ignores_a_nested_outline(node_available):
     m = lambda i, a, b: f"{{id: {i}, corners: [[{a},{a}],[{b},{a}],[{b},{b}],[{a},{b}]]}}"
-    r = run(f"R.pickTags([{m(0, 0, 10)},{m(0, 1, 9)},{m(1, 30, 40)}], [0,1])")
+    r = run(f"R.chooseTags([{m(0, 0, 10)},{m(0, 1, 9)},{m(1, 30, 40)}])")
     assert r["ok"] and [t["id"] for t in r["tags"]] == [0, 1]
 
 

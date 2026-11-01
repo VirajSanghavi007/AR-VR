@@ -1,4 +1,4 @@
-// Tabletop AR on 4 AprilTags: pure math for tagar.html (no three.js, so node can test it).
+// Tabletop AR on 2, 3 or 4 AprilTags: pure math for tagar.html (no three.js, so node can test it).
 // Matrices are WebXR style: 16 numbers, column-major. Points are [x, y, z] in metres.
 
 export const NICE_SCALES = [1, 2, 5, 10, 15, 20, 25, 30, 40, 50, 60, 75, 100, 125, 150, 200, 250, 300, 400, 500, 750, 1000];
@@ -171,19 +171,38 @@ export function mergeNested(markers) {
 export const levelNormal = (n, maxDeg = 10) =>
   unit(n)[1] > Math.cos((maxDeg * Math.PI) / 180) ? [0, 1, 0] : unit(n);
 
-// The 4 expected tags from one detection, or why not. markers: [{id, corners: [[x, y] x4]}].
-export function pickTags(markers, ids) {
+// The tags of one detection, whatever their ids and however many (2, 3 or 4), or why not.
+// markers: [{id, corners: [[x, y] x4]}]. More than `max` in view: the `max` biggest (nearest) win.
+// Returns the tags sorted by id, so the same set always comes back in the same order.
+export function chooseTags(markers, max = 4) {
   markers = mergeNested(markers);
   const seen = new Map();
-  for (const m of markers) if (ids.includes(m.id)) seen.set(m.id, (seen.get(m.id) || []).concat([m]));
+  for (const m of markers) seen.set(m.id, (seen.get(m.id) || []).concat([m]));
   const dup = [...seen].filter(([, l]) => l.length > 1).map(([id]) => id);
-  if (dup.length) return { ok: false, why: `id ${dup.join(", ")} seen twice: every tag needs its own id` };
-  // 2-tag mode: any 2 tags will do (e.g. ids 0 and 2 of a 4-tag sheet), when exactly 2 are in view
-  if (ids.length === 2 && ids.some((id) => !seen.has(id)) && markers.length === 2 && markers[0].id !== markers[1].id)
-    return { ok: true, tags: markers.slice().sort((a, b) => a.id - b.id) };
-  const missing = ids.filter((id) => !seen.has(id));
-  if (missing.length) return { ok: false, found: ids.length - missing.length, why: `${ids.length - missing.length} of ${ids.length} tags in view, missing id ${missing.join(", ")}` };
-  return { ok: true, tags: ids.map((id) => seen.get(id)[0]) };
+  if (dup.length) return { ok: false, found: markers.length, why: `id ${dup.join(", ")} seen twice: every tag needs its own id` };
+  if (markers.length < 2)
+    return { ok: false, found: markers.length, why: markers.length ? "1 tag in view: it takes 2, 3 or 4" : "No tags in view" };
+  const tags = markers.sort((a, b) => area2(b.corners) - area2(a.corners)).slice(0, max).sort((a, b) => a.id - b.id);
+  return { ok: true, found: tags.length, tags };
+}
+
+// Most tags seen in one frame over the last windowMs (recent: [{at, n}]): before the lock the page
+// waits for that many, so 2 of 4 tags drifting into view first do not lock a wrong, smaller area.
+export const mostSeen = (recent, now, windowMs = 1500) =>
+  recent.reduce((m, r) => (now - r.at <= windowMs && r.n > m ? r.n : m), 0);
+
+// Rectangle from 3 tags at 3 of its corners: the corner nearest a right angle is the middle one,
+// the 4th corner completes the parallelogram. Same result shape as fitRectangle (its angleErrDeg
+// is how far that corner is from square).
+export function fitFromThree(centers, n) {
+  if (centers.length !== 3) throw new Error(`need 3 tag points, got ${centers.length}`);
+  const off = (i) => {
+    const a = unit(sub(centers[(i + 1) % 3], centers[i])), b = unit(sub(centers[(i + 2) % 3], centers[i]));
+    return Math.abs(dot(a, b));                                // |cos| of the angle at corner i: 0 = square
+  };
+  const k = [0, 1, 2].reduce((best, i) => (off(i) < off(best) ? i : best), 0);
+  const B = centers[k], A = centers[(k + 1) % 3], C = centers[(k + 2) % 3];
+  return fitRectangle([A, B, C, sub(add(A, C), B)], n);
 }
 
 // Direction of a tag's top edge on the table, from its 4 world corners in detector order
@@ -198,10 +217,14 @@ export function turnToward(b, a, n) {
   return best;
 }
 
-// Rectangle from 2 tags at opposite corners, each laid any way up: the tags' own edges give
-// the rectangle's directions, the diagonal between their centres gives its size. Same result shape
-// as fitRectangle; angleErrDeg is how far the two tags' directions are from a whole number of quarter turns apart.
-export function fitFromTwo(centers, axes, n) {
+// Rectangle from 2 tags, each laid any way up. At opposite corners: the tags' own edges give the
+// rectangle's directions, the diagonal between their centres gives its size. Along one side (the line
+// between them within SIDE_RATIO of a tag edge direction): they are the two ends of that side and the
+// area is the square on it, on the side of the line toward the point `toward` (centred on the line
+// without one). Same result shape as fitRectangle, plus side: true for the second case; angleErrDeg is
+// how far the two tags' directions are from a whole number of quarter turns apart.
+export const SIDE_RATIO = 0.15;
+export function fitFromTwo(centers, axes, n, toward = null) {
   if (centers.length !== 2 || axes.length !== 2) throw new Error(`need 2 tag points, got ${centers.length}`);
   n = unit(n);
   const flat = (a) => sub(a, mul(n, dot(a, n)));
@@ -211,11 +234,17 @@ export function fitFromTwo(centers, axes, n) {
   const s = add(a0, a1);
   let u = norm(s) > 1e-6 ? unit(s) : a0, v = cross(u, n);
   const d = flat(sub(centers[1], centers[0]));
+  if (norm(d) < 0.02) throw new Error("the 2 tags are on top of each other: spread them out");
   let a = dot(d, u), b = dot(d, v);
-  if (Math.min(Math.abs(a), Math.abs(b)) < 0.02)
-    throw new Error("the 2 tags are along one side: put them at opposite corners of the rectangle");
-  if (Math.abs(b) > Math.abs(a)) { u = v; v = cross(u, n); [a, b] = [dot(d, u), dot(d, v)]; }   // u = long side
   const c0 = centers[0];
+  if (Math.min(Math.abs(a), Math.abs(b)) < SIDE_RATIO * Math.max(Math.abs(a), Math.abs(b))) {
+    const L = norm(d), su = unit(d), sv = cross(su, n), mid = mul(add(c0, centers[1]), 0.5);
+    const k = toward ? Math.sign(dot(sub(toward, mid), sv)) || 1 : 0;     // which side of the line, 0 = on it
+    const center = add(mid, mul(sv, (k * L) / 2)), h = mul(su, L / 2), w = mul(sv, L / 2);
+    const corners = [sub(sub(center, h), w), sub(add(center, h), w), add(add(center, h), w), add(sub(center, h), w)];
+    return { center, u: su, n, v: sv, width: L, height: L, corners, angleErrDeg, diagErrPct: 0, side: true };
+  }
+  if (Math.abs(b) > Math.abs(a)) { u = v; v = cross(u, n); [a, b] = [dot(d, u), dot(d, v)]; }   // u = long side
   const center = mul(add(c0, centers[1]), 0.5);
   const corners = [c0, add(c0, mul(u, a)), add(c0, d), add(c0, mul(v, b))];
   return { center, u, n, v, width: Math.abs(a), height: Math.abs(b), corners, angleErrDeg, diagErrPct: 0 };

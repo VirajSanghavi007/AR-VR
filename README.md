@@ -50,8 +50,17 @@ ETH3D terrace dense cloud: `colmap image_undistorter` on `dslr_calibration_jpg` 
 
 ## Tabletop AR site (GitHub Pages)
 
-- Online: https://virajsanghavi007.github.io/AR-VR/ (opens `tagar.html`, the tabletop AR on 2 or 4 AprilTags;
+- Online: https://virajsanghavi007.github.io/AR-VR/ (opens `tagar.html`, the tabletop AR on AprilTags;
   `tags.html` checks printed tags). The Pages workflow publishes `preview/` on every push to main.
+- Tags: lay 2, 3 or 4 tags (36h11, any ids, each id once); the page counts them itself. 4 or 3 tags mark corners
+  of the area; 2 tags sit at opposite corners or side by side (then the area is the square on that side, away
+  from the phone). In the desktop emulator 6 cm tags locked an 80 x 50 cm layout from ~0.75 m, 5 cm from ~0.55 m;
+  the 16 cm print is the safe default.
+- Tilted panels stand on a rail-and-leg rack and cast soft shadows on the table.
+- Panels: + Panel / − Panel add beside or remove the picked panel (tap to pick), + Row / − Row copy or drop
+  the back row, − / + / Fit scale the whole array (auto fit fills the tag rectangle). The HUD shows peak kW,
+  kWh/day and the average W per hour (24 h and daylight) from the "Peak sun hours / day" input with 20 % losses:
+  a rough estimate, not a yield simulation.
 - Local, any Windows PC with Python 3: double-click `run_preview.bat` (serves `preview/` on http://localhost:8765 and opens it).
 - The older roof pages (3D terrace viewer, 2-corner roof AR with a panel grid) were removed from the site;
   they are in git history before the commit that removed them. `rooftop/ar_export.py` still writes the GLB files.

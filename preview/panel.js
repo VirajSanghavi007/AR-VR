@@ -1,4 +1,5 @@
-// One movable solar panel for tagar.html: looks, cell layout and touch math (no three.js, so node can test it).
+// Movable solar panels for tagar.html: looks, cell layout, touch math, array patterns and an energy
+// estimate (no three.js, so node can test it).
 // Positions are design (roof) metres on the roof plane as [x, z]; yaw is three.js rotation.y in radians.
 
 // Real module sizes (metres): w across the short side, d along the long side (portrait).
@@ -14,7 +15,8 @@ export const PANEL_LOOKS = [
     cell: "#8a3f2b", busbar: "#8a3f2b", gap: null, frame: "#6b3a2a", frameMm: 0, texture: "bipv_shingle.jpg", watts: 200,
     // glass-glass laminate (real facade modules are ~10-12 mm), a dark fired-ceramic border round the
     // printed face, and a teal glass edge; the mortar joints read as shallow relief under the glass
-    thickMm: 12, borderMm: 14, edge: "#35504c", relief: 1.6 },
+    // laid flat it is the roof covering itself, so it sits flush with no rack under it
+    thickMm: 12, borderMm: 14, edge: "#35504c", relief: 1.6, flush: true },
 ];
 
 export const lookByKey = (key) => PANEL_LOOKS.find((l) => l.key === key) || PANEL_LOOKS[0];
@@ -112,4 +114,94 @@ export function moveBox(rectW, rectH, turns, scale, w, d) {
   const [rx, rz] = turns % 2 ? [rectH, rectW] : [rectW, rectH];
   const hx = Math.max(0, (rx / scale - w) / 2), hz = Math.max(0, (rz / scale - d) / 2);
   return { minX: -hx, maxX: hx, minZ: -hz, maxZ: hz };
+}
+
+// ---------- several panels: an array of {x, z, yaw}, all of one look ----------
+export const GAP_M = 0.02;                           // clamp gap between neighbouring modules
+
+// Does panel a sit on panel b (both w x d)? Exact when they share a yaw, which the patterns keep.
+export function overlaps(a, b, w, d) {
+  const [u, v] = toPanelFrame([a.x, a.z], b);
+  return Math.abs(u) < w - 1e-6 && Math.abs(v) < d - 1e-6;
+}
+
+// Where one more panel goes: beside panel `from` (right, left, behind, in front, then further out),
+// turned like it, on the first spot that is free.
+export function addSlot(panels, w, d, from = panels.length - 1, gap = GAP_M) {
+  if (!panels.length) return { x: 0, z: 0, yaw: 0 };
+  const p = panels[Math.min(panels.length - 1, Math.max(0, from))], c = Math.cos(p.yaw), s = Math.sin(p.yaw);
+  for (let k = 1; ; k++) {
+    for (const [u, v] of [[k * (w + gap), 0], [-k * (w + gap), 0], [0, k * (d + gap)], [0, -k * (d + gap)]]) {
+      const q = { x: p.x + u * c + v * s, z: p.z - u * s + v * c, yaw: p.yaw };   // panel frame back to roof
+      if (!panels.some((o) => overlaps(q, o, w, d))) return q;
+    }
+  }
+}
+
+// Indices of the back row: panels within half a panel of the largest z.
+export function lastRow(panels, d) {
+  const zmax = Math.max(...panels.map((p) => p.z));
+  return panels.flatMap((p, i) => (p.z > zmax - d / 2 ? [i] : []));
+}
+
+// Pattern: copy the back row one row further back. Returns a new array.
+export const addRow = (panels, d, gap = GAP_M) =>
+  panels.concat(lastRow(panels, d).map((i) => ({ ...panels[i], z: panels[i].z + d + gap })));
+
+// Drop the back row, unless it is the only one. Returns a new array.
+export function removeRow(panels, d) {
+  const back = new Set(lastRow(panels, d));
+  return back.size === panels.length ? panels.slice() : panels.filter((_, i) => !back.has(i));
+}
+
+// Footprint of the whole array (turned panels count by their corners): centre and size, metres.
+export function arrayBounds(panels, w, d) {
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (const p of panels) {
+    const c = Math.cos(p.yaw), s = Math.sin(p.yaw);
+    for (const [u, v] of [[-w / 2, -d / 2], [w / 2, -d / 2], [w / 2, d / 2], [-w / 2, d / 2]]) {
+      const x = p.x + u * c + v * s, z = p.z - u * s + v * c;
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z);
+    }
+  }
+  return { cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, w: x1 - x0, d: z1 - z0 };
+}
+
+// Another look has another size: stretch the spacing so neighbours stay one gap apart.
+export const relayout = (panels, from, to, gap = GAP_M) =>
+  panels.map((p) => ({ ...p, x: (p.x * (to.w + gap)) / (from.w + gap), z: (p.z * (to.d + gap)) / (from.d + gap) }));
+
+// Rough output of n panels of `watts` each: peak power, energy per day from the site's peak sun hours
+// (kWh/m2/day, ~4-6 in India) after typical losses (derate: heat, inverter, wiring, dust), and that
+// energy as an average per hour over the whole day and over the daylight hours.
+export function energy(n, watts, sunHours = 5, derate = 0.8, daylightHours = 12) {
+  const whDay = n * watts * sunHours * derate;
+  return { peakW: n * watts, kwhDay: whDay / 1000, avgW: whDay / 24, dayAvgW: whDay / daylightHours };
+}
+
+// The mounting under one panel, in the panel object's frame (roof at y = 0, panel tilted by tiltDeg
+// about x with its back edge, -z, up). Returns y = height of the tilt pivot (the panel's underside
+// centre) and parts = boxes {x, y, z, sx, sy, sz, rotX} (centre, size, turn about x), all metres.
+// Tilted: per side a rail under the panel, a short front and a tall rear leg down to a foot rail on
+// the roof, and a brace between the rear legs; lift = gap under the low front edge. Flat: two rails
+// on the roof, or nothing for a flush (BIPV) look.
+export function mountParts(look, tiltDeg, { lift = 0.15, bar = 0.04, inset = 0.2, legInset = 0.1 } = {}) {
+  const a = (tiltDeg * Math.PI) / 180, c = Math.cos(a), s = Math.sin(a), { w, d } = look;
+  const xs = [-1, 1].map((k) => k * (w / 2 - inset * w));
+  if (a === 0) {
+    if (look.flush) return { y: 0.002, parts: [] };
+    return { y: bar, parts: xs.map((x) => ({ x, y: bar / 2, z: 0, sx: bar, sy: bar, sz: d * 0.95, rotX: 0 })) };
+  }
+  const zf = d / 2 - legInset * d, zr = -zf;                   // leg positions along the panel
+  const y = lift + bar * c + zf * s;                           // front leg top lands exactly at lift
+  const under = (zt) => ({ Y: y - bar * c - zt * s, Z: -bar * s + zt * c });   // rail underside, panel z = zt
+  const F = under(zf), R = under(zr), parts = [];
+  for (const x of xs) {
+    parts.push({ x, y: y - (bar / 2) * c, z: -(bar / 2) * s, sx: bar, sy: bar, sz: d * 0.95, rotX: a });  // rail
+    parts.push({ x, y: F.Y / 2, z: F.Z, sx: bar, sy: F.Y, sz: bar, rotX: 0 });                           // front leg
+    parts.push({ x, y: R.Y / 2, z: R.Z, sx: bar, sy: R.Y, sz: bar, rotX: 0 });                           // rear leg
+    parts.push({ x, y: bar / 4, z: (F.Z + R.Z) / 2, sx: bar, sy: bar / 2, sz: F.Z - R.Z + bar, rotX: 0 }); // foot rail
+  }
+  parts.push({ x: 0, y: R.Y * 0.55, z: R.Z, sx: xs[1] - xs[0], sy: bar * 0.6, sz: bar * 0.6, rotX: 0 });  // rear brace
+  return { y, parts };
 }

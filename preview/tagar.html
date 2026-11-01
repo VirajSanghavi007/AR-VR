@@ -55,11 +55,12 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
 .hud small { display: block; color: #b9c4d0; font-family: var(--mono); font-size: .78rem; }
 .bar { position: absolute; left: 12px; right: 12px; bottom: max(16px, env(safe-area-inset-bottom));
        display: flex; flex-wrap: wrap; gap: 8px; pointer-events: auto; }
-.bar button { flex: 1 1 28%; border: 0; border-radius: 8px; padding: 12px 6px; font: 600 .9rem var(--sans);
+.bar button { flex: 1 1 22%; border: 0; border-radius: 8px; padding: 12px 6px; font: 600 .9rem var(--sans);
               background: rgba(12, 18, 26, .8); color: #fff; }
 .bar button.big { font-size: 1.2rem; padding: 8px 6px; }
 .bar button.primary { background: #1f9d55; }
 .bar button[hidden] { display: none; }
+.bar button:disabled { opacity: .4; }
 #shot { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 10px; padding: 16px;
         background: rgba(10, 14, 20, .92); pointer-events: auto; }
 #shot[hidden] { display: none; }
@@ -75,21 +76,25 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
 </head>
 <body>
 <div class="wrap">
-  <h1>Tabletop AR on 4 AprilTags</h1>
+  <h1>Tabletop AR on AprilTags</h1>
   <p class="note"><a href="tags.html">Check your printed tags</a></p>
 
   <div class="card">
     <p class="label">How it works</p>
     <ol>
-      <li>Print AprilTags (36h11, from <code>scripts/make_tags.py</code>). <b>2 tags</b> (ids 0 and 1, or any 2 if only 2 are in view): lay them at <b>opposite corners</b> of a rectangle, each tag any way up. <b>4 tags</b> (ids 0-3): one at each corner.</li>
+      <li>Print AprilTags (36h11, from <code>scripts/make_tags.py</code>), any ids, each tag laid any way up. The page counts them itself:
+        <b>2 tags</b> at opposite corners of a rectangle, or side by side at the two ends of one edge (the panels then fill the square behind them);
+        <b>3 tags</b> at 3 corners; <b>4 tags</b> at all 4 corners.</li>
       <li>Press <b>Start AR</b>, move the phone until the ring sits on the surface, then aim between the tags so all of them are in view.</li>
-      <li>One solar panel snaps into the rectangle, scaled to fill it (− and + pick a round 1:N scale). It is pinned to the table: walk around it, it stays put. Move the tags and it follows them.</li>
-      <li><b>Long-press the panel</b> and drag to move it; with it picked up, put a <b>second finger</b> down and twist to turn it. <b>Look</b> changes the panel type, <b>−</b> / <b>+</b> / <b>Fit</b> set the scale.</li>
-      <li><b>Photo</b> saves what the phone sees with the panel in it, captioned with the panel type, size and typical power, to share with the client.</li>
+      <li>A solar panel snaps into the rectangle, scaled to fill it (− and + pick a round 1:N scale). It is pinned to the table: walk around it, it stays put. Move the tags and it follows them.</li>
+      <li><b>+ Panel</b> adds one beside the picked panel (or the last one), <b>− Panel</b> removes the picked one. <b>+ Row</b> copies the back row one row further back, <b>− Row</b> takes it away. While the scale is on auto fit, the whole array is resized to fill the tags.</li>
+      <li><b>Tap a panel</b> to pick it; <b>long-press</b> and drag to move it; with it picked up, put a <b>second finger</b> down and twist to turn it. <b>Look</b> changes the panel type, <b>−</b> / <b>+</b> / <b>Fit</b> set the scale.</li>
+      <li>The top bar shows the array's peak power and a rough energy estimate: kWh per day and the average watts (Wh per hour) over the day, from the peak sun hours below and ~20% losses.</li>
+      <li><b>Photo</b> saves what the phone sees with the panels in it, captioned with the panel type, count, power and energy, to share with the client.</li>
     </ol>
     <div class="row">
-      <label class="f">Tag ids (2 or 4)<input id="ids" value="0,1" spellcheck="false" autocomplete="off"></label>
       <label class="f">Printed tag size (mm)<input id="size" type="number" inputmode="decimal" min="10" max="2000" step="1" value="160"></label>
+      <label class="f">Peak sun hours / day<input id="sun" type="number" inputmode="decimal" min="1" max="9" step="0.5" value="5"></label>
     </div>
     <div>
       <p class="label">Panel type</p>
@@ -112,6 +117,10 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
   <div id="touch"></div>
   <div class="hud" id="hud">Move the phone slowly to find the surface</div>
   <div class="bar">
+    <button id="o-add" hidden>+ Panel</button>
+    <button id="o-del" hidden>− Panel</button>
+    <button id="o-row" hidden>+ Row</button>
+    <button id="o-unrow" hidden>− Row</button>
     <button id="o-minus" class="big" hidden aria-label="Smaller model">−</button>
     <button id="o-fit" hidden>Fit</button>
     <button id="o-plus" class="big" hidden aria-label="Bigger model">+</button>
@@ -137,34 +146,39 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
 <script src="tag36h11.js?v=1"></script>
 <script type="module">
 import * as THREE from "three";
-import { parseIds } from "./tagcheck.js?v=1";
 import { PhoneEmulator, rng } from "./phoneemu.js?v=1";
-import { pixelRay, rayPlane, fitRectangle, fitFromTwo, tagAxis, alignAxes, rectMoved, tagEdge, fitScale, bestTurns,
-         scaleLabel, nextNiceScale, isStable, downsample, pickTags, averageTwo, tagsMoved, levelNormal } from "./tagrect.js?v=5";
+import { pixelRay, rayPlane, fitRectangle, fitFromTwo, fitFromThree, tagAxis, alignAxes, rectMoved, tagEdge, fitScale, bestTurns,
+         scaleLabel, nextNiceScale, isStable, downsample, chooseTags, mostSeen, averageTwo, tagsMoved, levelNormal } from "./tagrect.js?v=6";
 import { PANEL_LOOKS, lookByKey, nextLook, cellLayout, panelHit, twistDelta, isLongPress, clampToBox,
-         yawDeg, heightMap, borderPx, moveBox } from "./panel.js?v=4";
+         yawDeg, heightMap, borderPx, moveBox, addSlot, addRow, removeRow, lastRow, arrayBounds, relayout,
+         energy, mountParts } from "./panel.js?v=6";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import { composite, caption, shotName } from "./snap.js?v=1";
+import { composite, caption, shotName } from "./snap.js?v=2";
 
 const DETECT_EVERY_MS = 250, FOLLOW_EVERY_MS = 400, HIT_GRACE_MS = 500, MAX_ANGLE_ERR = 12, EDGE_WARN = 0.15;
 const TILTS = { tilted: 15, flat: 0 }, TOUCH_SLOP_M = 0.012, PANEL_STEP = Math.PI / 12;
 const $ = (id) => document.getElementById(id);
 let design = null, tiltKey = "tilted";
-// the one panel, in roof metres: centre x, z on the roof plane, yaw = rotation.y
-const panel = { x: 0, z: 0, yaw: 0, look: PANEL_LOOKS[0].key };
-let selected = false, grabbed = false, wantShot = false, shotUrl = null, shotFile = null;
+// the panels, in roof metres: centre x, z on the roof plane, yaw = rotation.y; all of one look.
+// sel = index of the picked panel, -1 for none.
+let look = PANEL_LOOKS[0].key, panels = [{ x: 0, z: 0, yaw: 0 }], sel = -1;
+let grabbed = false, wantShot = false, shotUrl = null, shotFile = null;
 
 // ---------- page ----------
 function chooseLook(key) {
-  panel.look = key;
-  setDesign();
-  if (rect) {                                                  // a new size: refit an auto scale, keep a hand-set one
-    const auto = Math.abs(scale - fitS) < 1e-9;
-    fitS = fitScale(design.w, design.d, rect.width, rect.height, turns);
-    if (auto) scale = fitS;
-  }
+  panels = relayout(panels, lookByKey(look), lookByKey(key));  // another size: neighbours stay one gap apart
+  look = key;
   for (const l of PANEL_LOOKS) $("l-" + l.key).setAttribute("aria-pressed", String(l.key === key));
-  if (rect) place();
+  refit();
+}
+// The array changed (look, panels added or removed): refit an auto scale, keep a hand-set one.
+function refit() {
+  setDesign();
+  if (!rect) return;
+  const auto = Math.abs(scale - fitS) < 1e-9;
+  fitS = fitScale(design.w, design.d, rect.width, rect.height, turns);
+  if (auto) scale = fitS;
+  place();
 }
 for (const l of PANEL_LOOKS) {
   const b = document.createElement("button");
@@ -177,30 +191,37 @@ for (const l of PANEL_LOOKS) {
 function chooseTilt(key) {
   tiltKey = key;
   for (const k of Object.keys(TILTS)) $("b-" + k).setAttribute("aria-pressed", String(k === key));
-  if (rect) updatePanel();
+  if (rect) updatePanels();
 }
 $("b-tilted").onclick = () => chooseTilt("tilted");
 $("b-flat").onclick = () => chooseTilt("flat");
 
-// What auto fit sizes into the tag rectangle: the chosen panel's footprint (metres), centred.
-const setDesign = () => { const l = lookByKey(panel.look); design = { y: 0, cx: 0, cz: 0, w: l.w, d: l.d }; };
+// What auto fit sizes into the tag rectangle: the footprint of the whole array (metres), centred on it.
+const setDesign = () => { const l = lookByKey(look), b = arrayBounds(panels, l.w, l.d); design = { y: 0, cx: b.cx, cz: b.cz, w: b.w, d: b.d }; };
 setDesign();
-const inRect = () => moveBox(rect.width, rect.height, turns, scale, design.w, design.d);
+// where a panel's centre may be dragged: one panel inside the tag rectangle, in roof metres
+const inRect = () => {
+  const l = lookByKey(look), b = moveBox(rect.width, rect.height, turns, scale, l.w, l.d);
+  return { minX: b.minX + design.cx, maxX: b.maxX + design.cx, minZ: b.minZ + design.cz, maxZ: b.maxZ + design.cz };
+};
+const sunHours = () => parseFloat($("sun").value) || 5;
 
 (async () => {
   const ok = navigator.xr && await navigator.xr.isSessionSupported("immersive-ar").catch(() => false);
   $("start").disabled = !ok;
   $("status").textContent = ok
-    ? "Ready. Lay the 4 tags out, then press Start AR."
+    ? "Ready. Lay 2, 3 or 4 tags out, then press Start AR."
     : "This needs Chrome on an Android phone with Google Play Services for AR. iPhone Safari has no WebXR, so it cannot run here.";
 })();
 
 // ---------- scene ----------
 let renderer, scene, camera, reticle, group, session, hitSource, refSpace, binding, fb, pixels;
-let rect = null, scale = 1, fitS = 1, turns = 0, anchor = null, lockPose = null, inner = null, panelObj = null;
+let rect = null, scale = 1, fitS = 1, turns = 0, anchor = null, lockPose = null, inner = null, panelObjs = [];
 let lastProj = null, lastPose = null, simulated = false;
-chooseLook(panel.look);
-let ids = [0, 1, 2, 3], tagSize = 0.16, history = [], lastHit = null, lastHitAt = 0, lastDetect = 0;
+chooseLook(look);
+// historyKey = the tag ids the history was built from; seenCounts = tags per frame lately (mostSeen)
+let tagSize = 0.16, history = [], historyKey = "", seenCounts = [], lastHit = null, lastHitAt = 0, lastDetect = 0;
+let sun = null, shadowCatcher = null;
 let flipY = true, flipKnown = false, detector = null, lastEdge = 0, emuCamera = null, emu = null, emuR = null;
 
 function buildScene() {
@@ -209,13 +230,20 @@ function buildScene() {
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.xr.enabled = true;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   document.body.appendChild(renderer.domElement);
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera();
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x777777, 1.8));
-  const sun = new THREE.DirectionalLight(0xffffff, 2.0);
-  sun.position.set(1, 3, 1);
-  scene.add(sun);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x777777, 1.5));
+  // the sun rides in the tag rectangle's frame (added in place()), so the shadows fall the same way on any table
+  sun = new THREE.DirectionalLight(0xffffff, 1.8);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.002;
+  // the table under the tags shows only the shadows, the camera image stays visible through it
+  shadowCatcher = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.ShadowMaterial({ opacity: 0.35 }));
+  shadowCatcher.receiveShadow = true;
   reticle = new THREE.Mesh(new THREE.RingGeometry(0.03, 0.04, 40).rotateX(-Math.PI / 2),
                            new THREE.MeshBasicMaterial({ color: 0xffffff }));
   reticle.matrixAutoUpdate = false;
@@ -227,7 +255,7 @@ function buildScene() {
 }
 
 // One module at real size: cells drawn on a canvas, frame-coloured sides, tilted about its short
-// side with the low edge on the roof. A yellow footprint shows while it is selected.
+// side with the low edge on the roof. A yellow footprint (ring) shows while it is picked.
 const textures = new Map();
 function panelTexture(look) {
   if (textures.has(look.key)) return textures.get(look.key);
@@ -280,13 +308,16 @@ function buildPanel(look) {
   const face = glass
     ? new THREE.MeshPhysicalMaterial({ map, bumpMap: map.userData.bump, bumpScale: look.relief, roughness: 0.5, metalness: 0,
                                        clearcoat: 1, clearcoatRoughness: 0.05, envMap: reflections(), envMapIntensity: 0.9 })
-    : new THREE.MeshStandardMaterial({ map, roughness: 0.3, metalness: 0.15,
-                                       transparent: !look.gap, side: THREE.DoubleSide });
+    // glass over the cells: a soft reflection of the room instead of a hard sun glint, which on a flat
+    // glossy face lit the whole panel up and blacked it out again as the phone shook
+    : new THREE.MeshStandardMaterial({ map, roughness: 0.45, metalness: 0, envMap: reflections(), envMapIntensity: 0.5,
+                                       side: THREE.DoubleSide });
   const edge = glass
     ? new THREE.MeshPhysicalMaterial({ color: look.edge, roughness: 0.12, metalness: 0, clearcoat: 1, envMap: reflections() })
-    : new THREE.MeshStandardMaterial({ color: look.frame, roughness: 0.5, metalness: 0.6 });
+    : aluminium(look.frame);
   const T = glass ? look.thickMm / 1000 : 0.035, mesh = new THREE.Mesh(new THREE.BoxGeometry(look.w, T, look.d),
                                          [edge, edge, face, look.gap ? edge : face, edge, edge]);
+  mesh.castShadow = true;
   tilt.add(mesh);
   if (glass) {                                                 // dark shadow line where the glass meets the wall
     const back = new THREE.Mesh(new THREE.BoxGeometry(look.w - 0.03, 0.008, look.d - 0.03),
@@ -295,24 +326,51 @@ function buildPanel(look) {
     tilt.add(back);
   }
   obj.add(tilt);
-  const sel = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(
+  const rack = new THREE.Group();
+  obj.add(rack);
+  const ring = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(
     [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => new THREE.Vector3(a * (look.w / 2 + 0.05), 0.01, b * (look.d / 2 + 0.05)))),
     new THREE.LineBasicMaterial({ color: 0xffd23f }));
-  obj.add(sel);
-  obj.userData = { look, tilt, mesh, sel, T };
+  ring.material.depthTest = false; ring.renderOrder = 1;      // drawn over the panels, so the picked one shows in an array
+  obj.add(ring);
+  obj.userData = { look, tilt, mesh, ring, T, rack, rackTilt: null };
   return obj;
 }
 
-// Pose the panel from `panel` without rebuilding it: position, yaw, tilt, selection outline.
-function updatePanel() {
-  if (!panelObj || !design) return;
-  const { look, tilt, mesh, sel, T } = panelObj.userData, a = (TILTS[tiltKey] * Math.PI) / 180;
-  panelObj.position.set(panel.x, design.y, panel.z);
-  panelObj.rotation.y = panel.yaw;
-  tilt.rotation.x = a;                                         // back edge (-z) up
-  tilt.position.y = (look.d / 2) * Math.sin(a) + 0.03;         // low edge just above the roof
-  mesh.position.y = T / 2;
-  sel.visible = selected;
+const metals = new Map();
+function aluminium(color) {                                    // brushed metal that reflects the room, not flat grey
+  if (!metals.has(color))
+    metals.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.85, envMap: reflections() }));
+  return metals.get(color);
+}
+
+// The rails and legs under one panel for this tilt (panel.js mountParts), rebuilt only when the tilt changes.
+function buildRack(obj, tiltDeg) {
+  const { look: l, rack } = obj.userData, m = mountParts(l, tiltDeg);
+  rack.clear();
+  for (const p of m.parts) {
+    const b = new THREE.Mesh(new THREE.BoxGeometry(p.sx, p.sy, p.sz), aluminium("#a7adb4"));
+    b.position.set(p.x, p.y, p.z); b.rotation.x = p.rotX;
+    b.castShadow = true;
+    rack.add(b);
+  }
+  obj.userData.rackTilt = tiltDeg;
+  return m.y;
+}
+
+// Pose the panels from `panels` without rebuilding them: position, yaw, tilt, rack, pick outline.
+function updatePanels() {
+  if (!design) return;
+  const deg = TILTS[tiltKey], a = (deg * Math.PI) / 180;
+  panelObjs.forEach((obj, i) => {
+    const p = panels[i], { tilt, mesh, ring, T } = obj.userData;
+    obj.position.set(p.x, design.y, p.z);
+    obj.rotation.y = p.yaw;
+    tilt.rotation.x = a;                                       // back edge (-z) up
+    if (obj.userData.rackTilt !== deg) tilt.position.y = buildRack(obj, deg);   // panel rests on its rails
+    mesh.position.y = T / 2;
+    ring.visible = i === sel;
+  });
   if (rect) report();
 }
 
@@ -321,17 +379,25 @@ function place() {
   group.clear();
   if (!design || !rect) return;
   inner = new THREE.Group();
-  [panel.x, panel.z] = clampToBox([panel.x, panel.z], inRect());
-  // only the panel is drawn: the scanned roof outline (grey slab, red ring, orange keep-outs) stays out of the view
-  panelObj = buildPanel(lookByKey(panel.look));
-  inner.add(panelObj);
+  // only the panels are drawn: the scanned roof outline (grey slab, red ring, orange keep-outs) stays out of the view
+  panelObjs = panels.map(() => buildPanel(lookByKey(look)));
+  panelObjs.forEach((o) => inner.add(o));
   inner.position.set(-design.cx, -design.y, -design.cz);
   const turn = new THREE.Group();
   turn.add(inner);
   turn.rotation.y = (turns * Math.PI) / 2;
   turn.scale.setScalar(scale);
   group.add(turn);
-  updatePanel();
+  // sun high over one corner of the tags, its shadow box just covering them (in table metres)
+  const R = Math.max(rect.width, rect.height);
+  sun.position.set(0.5 * R, 2 * R, 0.7 * R);
+  sun.target.position.set(0, 0, 0);
+  Object.assign(sun.shadow.camera, { left: -R, right: R, top: R, bottom: -R, near: 0.01, far: 5 * R });
+  sun.shadow.camera.updateProjectionMatrix();
+  shadowCatcher.scale.set(2 * R, 1, 2 * R);
+  shadowCatcher.position.y = 0.001;
+  group.add(sun, sun.target, shadowCatcher);
+  updatePanels();
   // outline of the tag rectangle itself, on the table
   const hw = rect.width / 2, hh = rect.height / 2;
   group.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(
@@ -341,23 +407,29 @@ function place() {
 }
 
 function panelLine() {
-  const l = lookByKey(panel.look);
-  const how = grabbed ? "drag to move, second finger to turn" : selected ? "two fingers twist to turn, tap elsewhere to let go"
-                                                                         : "long-press the panel to move it";
-  return `<small>panel: ${l.name} ${l.w.toFixed(2)} × ${l.d.toFixed(2)} m, ~${l.watts} W, ${TILTS[tiltKey]}° tilt, facing ${yawDeg(panel.yaw)}° · ${how}</small>`;
+  const l = lookByKey(look), p = panels[sel], e = energy(panels.length, l.watts, sunHours());
+  const how = grabbed ? "drag to move, second finger to turn" : p ? "two fingers twist to turn, tap elsewhere to let go"
+                                                                 : "tap a panel to pick it, long-press to move it";
+  const kw = (w) => (w >= 1000 ? `${(w / 1000).toFixed(2)} kW` : `${w} W`);
+  return `<small>${panels.length} × ${l.name} ${l.w.toFixed(2)} × ${l.d.toFixed(2)} m, ~${l.watts} W each, ${TILTS[tiltKey]}° tilt` +
+    `${p ? `, picked one facing ${yawDeg(p.yaw)}°` : ""} · ${how}</small>` +
+    `<small style="color:#9be5b4">power ${kw(e.peakW)} peak · ~${e.kwhDay.toFixed(1)} kWh/day · avg ~${Math.round(e.avgW)} W per hour over 24 h` +
+    ` (~${Math.round(e.dayAvgW)} W in daylight, ${sunHours()} sun h)</small>`;
 }
 
 function report() {
   const cm = (m) => (m * scale * 100).toFixed(0);
   const fit = Math.abs(scale - fitS) < 1e-9 ? " (auto fit)" : "";
   const edge = lastEdge ? ` · tag edge ${(lastEdge * 1000).toFixed(0)} mm (printed ${(tagSize * 1000).toFixed(0)})` : "";
+  $("o-del").disabled = panels.length < 2;
+  $("o-unrow").disabled = lastRow(panels, lookByKey(look).d).length === panels.length;
   $("hud").innerHTML = `Scale ${scaleLabel(scale)}${fit}` +
-    panelLine() + `<small>tags ${(rect.width * 100).toFixed(1)} × ${(rect.height * 100).toFixed(1)} cm · panel shown ${cm(design.w)} × ${cm(design.d)} cm${edge}</small>` +
+    panelLine() + `<small>tags ${(rect.width * 100).toFixed(1)} × ${(rect.height * 100).toFixed(1)} cm · panels shown ${cm(design.w)} × ${cm(design.d)} cm${edge}</small>` +
     (Math.abs(lastEdge - tagSize) / tagSize > EDGE_WARN
       ? `<small style="color:#ffb86b">The tags measure off from the printed size: the ring was probably not on the table. Press Find tags again with the ring between the tags.</small>` : "");
 }
 
-const BUTTONS = ["o-minus", "o-fit", "o-plus", "o-look", "o-pturn", "o-turn", "o-shot", "o-relock"];
+const BUTTONS = ["o-add", "o-del", "o-row", "o-unrow", "o-minus", "o-fit", "o-plus", "o-look", "o-pturn", "o-turn", "o-shot", "o-relock"];
 function setButtons(locked) {
   BUTTONS.forEach((id) => { $(id).hidden = !locked; });
 }
@@ -376,17 +448,17 @@ function takeShot(frame, view) {
   shotCam.matrixWorldInverse.copy(shotCam.matrixWorld).invert();
   const rt = new THREE.WebGLRenderTarget(w, h);
   rt.texture.colorSpace = THREE.SRGBColorSpace;
-  const xr = renderer.xr.enabled, bg = scene.background, rv = reticle.visible, sv = panelObj && panelObj.userData.sel.visible;
+  const xr = renderer.xr.enabled, bg = scene.background, rv = reticle.visible, rings = panelObjs.map((o) => o.userData.ring);
   const prevTarget = renderer.getRenderTarget(), prevColor = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha();
   renderer.xr.enabled = false; scene.background = null; reticle.visible = false;
-  if (panelObj) panelObj.userData.sel.visible = false;
+  rings.forEach((r) => { r.visible = false; });
   renderer.setRenderTarget(rt); renderer.setClearColor(0x000000, 0); renderer.clear();
   renderer.render(scene, shotCam);
   const scenePx = new Uint8Array(w * h * 4);
   renderer.readRenderTargetPixels(rt, 0, 0, w, h, scenePx);
   renderer.setRenderTarget(prevTarget); renderer.setClearColor(prevColor, prevAlpha);
   renderer.xr.enabled = xr; scene.background = bg; reticle.visible = rv;
-  if (panelObj) panelObj.userData.sel.visible = sv;
+  rings.forEach((r, i) => { r.visible = i === sel; });
   rt.dispose();
   return showShot(composite(camPx, scenePx, w, h, flipY), w, h);
 }
@@ -395,7 +467,7 @@ function showShot(rgba, w, h) {
   const c = document.createElement("canvas"), g = c.getContext("2d");
   c.width = w; c.height = h;
   g.putImageData(new ImageData(rgba, w, h), 0, 0);
-  const text = caption(lookByKey(panel.look), TILTS[tiltKey]), fs = Math.max(12, Math.round(w / 34)), band = fs * 2.2;
+  const text = caption(lookByKey(look), TILTS[tiltKey], panels.length, sunHours()), fs = Math.max(12, Math.round(w / 34)), band = fs * 2.2;
   g.fillStyle = "rgba(0,0,0,.6)"; g.fillRect(0, h - band, w, band);
   g.fillStyle = "#fff"; g.font = `600 ${fs}px sans-serif`; g.textBaseline = "middle";
   g.fillText(text, fs * 0.8, h - band / 2, w - fs * 1.6);
@@ -426,6 +498,7 @@ function readCamera(frame, view) {
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
   gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
   gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
+  renderer.resetState();          // raw GL calls above: three.js's cached GL state is stale until reset
   return { w, h };
 }
 
@@ -435,10 +508,20 @@ function detectRect(frame, view) {
   const img = downsample(pixels, cam.w, cam.h, flipY);
   const found = detector.detect(img);
   // a mirrored tag never decodes, so the row order that decodes is the upright one
-  if (!found.length) { if (!flipKnown) flipY = !flipY; return `Aim at the tags so all ${ids.length} are in view`; }
+  if (!found.length) { if (!flipKnown) flipY = !flipY; return "Aim at the tags so all of them are in view"; }
   flipKnown = true;
-  const pick = pickTags(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) })), ids);
-  if (!pick.ok) return pick.why + (pick.found ? `: step back so all ${ids.length} fit, or move closer if a far one is small` : "");
+  const pick = chooseTags(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) })));
+  if (!pick.ok) return pick.why + (pick.found === 1 ? ": step back so the others fit too" : "");
+  const key = pick.tags.map((t) => t.id).join(","), count = pick.tags.length, now = performance.now();
+  if (rect) {
+    if (key !== rect.ids) return "Not all the locked tags are in view";   // a hand over one tag is not a move
+  } else {
+    // wait for the most tags seen lately: 2 of a 4-tag layout coming into view first must not lock
+    seenCounts = seenCounts.filter((s) => now - s.at < 3000).concat([{ at: now, n: count }]);
+    const most = mostSeen(seenCounts, now);
+    if (count < most) return `${count} of ${most} tags in view: keep all ${most} in view`;
+  }
+  if (key !== historyKey) { history = []; historyKey = key; }
   // before the lock: the hit-test plane; after it: the table the tags were found on
   const hp = lastHit, n = rect ? rect.n : levelNormal([hp[4], hp[5], hp[6]]), p0 = rect ? rect.center : [hp[12], hp[13], hp[14]];
   const proj = Array.from(view.projectionMatrix), pose = Array.from(view.transform.matrix);
@@ -451,25 +534,30 @@ function detectRect(frame, view) {
     axes.push(tagAxis(world));
   }
   let r;
-  if (ids.length === 2) {
+  if (count === 2) {
     // history holds raw 2-tag frames here: fit from their mean once they agree
     history.push({ centers, axes });
     if (history.length > 8) history.shift();
     const avg = averageTwo(history);
-    if (!avg) return "Both tags found, hold still…";
-    try { r = fitFromTwo(avg.centers, avg.axes, n); } catch (e) { history = []; return e.message; }
+    if (!avg) return "2 tags found, hold still…";
+    // side by side: the area goes on the far side of the tags from the phone (after the lock: where it already is)
+    const mid = avg.centers[0].map((v, i) => (v + avg.centers[1][i]) / 2), eye = pose.slice(12, 15);
+    const toward = rect ? rect.center : mid.map((v, i) => 2 * v - eye[i]);
+    try { r = fitFromTwo(avg.centers, avg.axes, n, toward); } catch (e) { history = []; return e.message; }
     r.tags = avg.centers;
   } else {
-    try { r = fitRectangle(centers, n); } catch (e) { return e.message; }
+    try { r = count === 3 ? fitFromThree(centers, n) : fitRectangle(centers, n); } catch (e) { return e.message; }
+    r.tags = centers;
   }
+  r.ids = key;
   if (r.angleErrDeg > MAX_ANGLE_ERR)
-    return ids.length === 2 ? `The 2 tags are off by ${r.angleErrDeg.toFixed(0)}°: lay them flat on the same surface, square to each other`
-                            : `Tags are not a rectangle (a corner is off by ${r.angleErrDeg.toFixed(0)}°): square them up`;
+    return count === 2 ? `The 2 tags are off by ${r.angleErrDeg.toFixed(0)}°: lay them flat on the same surface, square to each other`
+                       : `Tags are not a rectangle (a corner is off by ${r.angleErrDeg.toFixed(0)}°): square them up`;
   r.edge = edges.reduce((a, b) => a + b, 0) / edges.length;
-  if (ids.length === 2) return r;
+  if (count === 2) return r;
   history.push(r);
   if (history.length > 6) history.shift();
-  return isStable(history) ? r : "All 4 tags found, hold still…";
+  return isStable(history) ? r : `${count} tags found, hold still…`;
 }
 
 // follow = the tags moved after the lock: keep the turn and a hand-set scale, refit an auto one.
@@ -503,8 +591,8 @@ async function lock(frame, r, follow = false) {
 
 function relock() {
   if (anchor && anchor.delete) anchor.delete();
-  anchor = null; rect = null; history = []; group.clear(); setButtons(false);
-  $("hud").innerHTML = `Aim between the ${ids.length} tags`;
+  anchor = null; rect = null; history = []; historyKey = ""; seenCounts = []; group.clear(); setButtons(false);
+  $("hud").innerHTML = "Aim between the tags";
 }
 
 // One detection tick (the XR loop and the desktop emulator both call this): find the tags before the
@@ -517,7 +605,7 @@ function detectStep(frame, view) {
     const r = detectRect(frame, view);
     // 2 tags: judge by where the tags are, their fitted size and angle still wobble a little
     const moved = typeof r !== "string" &&
-      (ids.length === 2 ? tagsMoved(rect.tags, r.tags) || rectMoved(rect, r, 0.05, 8) : rectMoved(rect, r));
+      (r.tags.length === 2 ? tagsMoved(rect.tags, r.tags) || rectMoved(rect, r, 0.05, 8) : rectMoved(rect, r));
     if (moved) lock(frame, r, true);
   } else if (!rect && now - lastDetect > DETECT_EVERY_MS) {
     lastDetect = now;
@@ -536,8 +624,6 @@ function detectStep(frame, view) {
 
 // ---------- session ----------
 $("start").onclick = async () => {
-  try { ids = parseIds($("ids").value); } catch (e) { $("status").textContent = e.message; return; }
-  if (ids.length !== 2 && ids.length !== 4) { $("status").textContent = `Give 2 or 4 tag ids (got ${ids.length}).`; return; }
   tagSize = (parseFloat($("size").value) || 160) / 1000;
   if (!design) { $("status").textContent = "The design is still loading, try again in a second."; return; }
   if (!renderer) buildScene();
@@ -559,7 +645,7 @@ $("start").onclick = async () => {
     $("overlay").classList.remove("on"); hitSource = null; relock(); renderer.setAnimationLoop(null);
   });
   relock();
-  $("hud").innerHTML = `Move the phone slowly to find the table<small>then aim between the ${ids.length} tags</small>`;
+  $("hud").innerHTML = "Move the phone slowly to find the table<small>then aim between the tags</small>";
   warnedCamera = false;
   renderer.setAnimationLoop((t, frame) => {
     if (frame && hitSource) {
@@ -594,8 +680,18 @@ $("o-relock").onclick = relock;
 $("o-shot").onclick = () => { wantShot = true; };
 $("shot-close").onclick = () => { $("shot").hidden = true; };
 $("shot-share").onclick = () => navigator.share({ files: [shotFile], title: "Solar panel preview" }).catch(() => {});
-$("o-look").onclick = () => chooseLook(nextLook(panel.look, 1));
-$("o-pturn").onclick = () => { panel.yaw -= PANEL_STEP; updatePanel(); };
+$("o-look").onclick = () => chooseLook(nextLook(look, 1));
+$("o-pturn").onclick = () => { for (const p of sel >= 0 ? [panels[sel]] : panels) p.yaw -= PANEL_STEP; updatePanels(); };
+// array: + Panel beside the picked (or last) one, - Panel drops the picked (or last) one; rows copy or drop the back row
+$("o-add").onclick = () => {
+  const l = lookByKey(look);
+  panels.push(addSlot(panels, l.w, l.d, sel >= 0 ? sel : panels.length - 1));
+  sel = panels.length - 1;
+  refit();
+};
+$("o-del").onclick = () => { if (panels.length > 1) panels.splice(sel >= 0 ? sel : panels.length - 1, 1); sel = -1; refit(); };
+$("o-row").onclick = () => { panels = addRow(panels, lookByKey(look).d); sel = -1; refit(); };
+$("o-unrow").onclick = () => { panels = removeRow(panels, lookByKey(look).d); sel = -1; refit(); };
 
 // ---------- touching the panel ----------
 // Screen point -> roof point [x, z] in roof metres, through the current camera onto the locked table plane.
@@ -614,7 +710,12 @@ function roofPoint(cx, cy) {
 const touches = new Map();
 let pressTimer = 0, grabOffset = [0, 0];
 const slopRoof = () => TOUCH_SLOP_M / scale;          // about 1 cm on the table, whatever the scale
-const onPanel = (p) => !!p && panelHit(p, panel, lookByKey(panel.look), slopRoof());
+// index of the panel under roof point p (the last drawn wins), -1 for none
+function panelAt(p) {
+  if (!p) return -1;
+  for (let i = panels.length - 1; i >= 0; i--) if (panelHit(p, panels[i], lookByKey(look), slopRoof())) return i;
+  return -1;
+}
 
 $("touch").addEventListener("pointerdown", (e) => {
   if (!rect) return;
@@ -626,13 +727,13 @@ $("touch").addEventListener("pointerdown", (e) => {
     pressTimer = setTimeout(() => {
       const t = touches.get(e.pointerId);
       if (!t || !isLongPress(t.at, performance.now(), Math.hypot(t.x - t.x0, t.y - t.y0))) return;
-      const p = roofPoint(t.x, t.y);
-      if (onPanel(p)) {
-        selected = grabbed = true;
-        grabOffset = [panel.x - p[0], panel.z - p[1]];
+      const p = roofPoint(t.x, t.y), i = panelAt(p);
+      if (i >= 0) {
+        sel = i; grabbed = true;
+        grabOffset = [panels[i].x - p[0], panels[i].z - p[1]];
         if (navigator.vibrate) navigator.vibrate(25);
       }
-      updatePanel();
+      updatePanels();
     }, 450);
   }
 });
@@ -641,12 +742,13 @@ $("touch").addEventListener("pointermove", (e) => {
   if (!t) return;
   const prev = [...touches.values()].map((q) => q.roof);
   t.x = e.clientX; t.y = e.clientY; t.roof = roofPoint(t.x, t.y);
-  if (touches.size === 2 && selected) {
+  if (touches.size === 2 && sel >= 0) {
     const now = [...touches.values()].map((q) => q.roof);
-    if (prev.every(Boolean) && now.every(Boolean)) { panel.yaw += twistDelta(prev[0], prev[1], now[0], now[1]); updatePanel(); }
+    if (prev.every(Boolean) && now.every(Boolean)) { panels[sel].yaw += twistDelta(prev[0], prev[1], now[0], now[1]); updatePanels(); }
   } else if (touches.size === 1 && grabbed && t.roof) {
-    [panel.x, panel.z] = clampToBox([t.roof[0] + grabOffset[0], t.roof[1] + grabOffset[1]], inRect());
-    updatePanel();
+    const p = panels[sel];
+    [p.x, p.z] = clampToBox([t.roof[0] + grabOffset[0], t.roof[1] + grabOffset[1]], inRect());
+    updatePanels();
   }
 });
 function release(e) {
@@ -656,13 +758,13 @@ function release(e) {
   if (!t) return;
   const tap = performance.now() - t.at < 300 && Math.hypot(t.x - t.x0, t.y - t.y0) < 12;
   if (touches.size === 0) {
-    if (tap && !grabbed && !onPanel(t.roof)) selected = false;   // a tap off the panel lets go of it
+    if (tap && !grabbed) sel = panelAt(t.roof);                 // a tap picks a panel, a tap off them lets go
     grabbed = false;
-    updatePanel();
+    updatePanels();
   } else if (grabbed) {
     // one of two fingers lifted: carry on dragging with the one that is left
     const rest = [...touches.values()][0];
-    if (rest.roof) grabOffset = [panel.x - rest.roof[0], panel.z - rest.roof[1]];
+    if (rest.roof) grabOffset = [panels[sel].x - rest.roof[0], panels[sel].z - rest.roof[1]];
   }
 }
 $("touch").addEventListener("pointerup", release);
@@ -699,9 +801,9 @@ window.__tagar = {
   // Phone emulator: emuStart resets like Start AR does; each emuRun step renders the tags from a
   // shaken virtual phone (tracking error trackMm, table normal off by normalDeg) and runs the
   // page's own detection tick on it. Returns every HUD message and the lock state.
-  emuStart({ ids: idText = $("ids").value, size = 0.16, seed = 1 } = {}) {
+  emuStart({ size = 0.16, seed = 1 } = {}) {
     if (!renderer) buildScene();
-    ids = parseIds(String(idText)); tagSize = size;
+    tagSize = size;
     detector = detector || new AR.Detector({ dictionaryName: "APRILTAG_36h11" });
     const dpr = Math.min(2, devicePixelRatio || 1);
     emu = emu || new PhoneEmulator(THREE, renderer, AR.DICTIONARIES.APRILTAG_36h11.codeList,
@@ -756,12 +858,15 @@ window.__tagar = {
     camera.updateMatrixWorld(true);
     return w;
   },
-  // Panel centre in world metres (for aiming the emulated camera at it).
-  panelWorld() { const v = new THREE.Vector3(); scene.updateMatrixWorld(true); panelObj.getWorldPosition(v); return v.toArray(); },
+  // Picked (else first) panel centre in world metres (for aiming the emulated camera at it).
+  panelWorld() { const v = new THREE.Vector3(); scene.updateMatrixWorld(true); panelObjs[Math.max(0, sel)].getWorldPosition(v); return v.toArray(); },
+  // Pick panel i (-1 for none), as a tap on it would.
+  pick(i) { sel = i; updatePanels(); return this.state(); },
   follow(centres, n = [0, 1, 0], edge = 0.16) { const r = fitRectangle(centres, n); r.edge = edge; lock({}, r, true); return this.state(); },
   state() {
     return { locked: !!rect, scale, fit: fitS, turns, label: scaleLabel(scale),
-             buttons: BUTTONS.filter((id) => !$(id).hidden), panel: { ...panel }, selected, grabbed,
+             buttons: BUTTONS.filter((id) => !$(id).hidden), look, panels: panels.map((p) => ({ ...p })), sel, grabbed,
+             disabled: BUTTONS.filter((id) => $(id).disabled), design: { ...design },
              hud: $("hud").textContent };
   },
 };

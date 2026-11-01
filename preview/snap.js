@@ -20,9 +20,15 @@ export function composite(cam, scene, w, h, camFlip = true) {
   return out;
 }
 
-// One caption line: panel type, real size, tilt, and its typical power.
-export function caption(look, tiltDeg) {
-  return `${look.name} panel · ${look.w.toFixed(2)} × ${look.d.toFixed(2)} m · ${tiltDeg}° tilt · ~${look.watts} W typical`;
+// One caption line: panel type, real size, tilt, and its typical power. For n panels: the count and
+// their total peak power; with the site's peak sun hours, also the energy per day (as energy() in panel.js).
+export function caption(look, tiltDeg, n = 1, sunHours = 0, derate = 0.8) {
+  const size = `${look.w.toFixed(2)} × ${look.d.toFixed(2)} m`;
+  let text = n > 1
+    ? `${n} × ${look.name} panels · ${size} each · ${tiltDeg}° tilt · ${((n * look.watts) / 1000).toFixed(1)} kW peak`
+    : `${look.name} panel · ${size} · ${tiltDeg}° tilt · ~${look.watts} W typical`;
+  if (sunHours > 0) text += ` · ~${((n * look.watts * sunHours * derate) / 1000).toFixed(1)} kWh/day`;
+  return text;
 }
 
 // File name from the local time, e.g. solar-preview-20261101-143005.png
