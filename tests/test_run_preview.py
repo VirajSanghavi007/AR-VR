@@ -1,6 +1,7 @@
-"""Smoke test: run_preview.bat serves the preview page and both models."""
-import json
+"""Smoke test: run_preview.bat serves the site: the root sends you to the tabletop AR, and every
+file the AR and tag-check pages load is there."""
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+PREVIEW = ROOT / "preview"
 
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows batch file")
 
@@ -21,7 +23,7 @@ def _free_port():
         return s.getsockname()[1]
 
 
-def test_run_preview_bat_serves_page_and_models():
+def test_run_preview_bat_serves_the_ar_pages():
     port = _free_port()
     env = {**os.environ, "PORT": str(port), "NO_BROWSER": "1"}
     proc = subprocess.Popen(["cmd", "/c", str(ROOT / "run_preview.bat")], env=env,
@@ -36,17 +38,16 @@ def test_run_preview_bat_serves_page_and_models():
                 time.sleep(0.1)
         else:
             pytest.fail(f"server never answered: {proc.stdout.read1(4000) if proc.poll() is not None else ''}")
-        assert "<title>Terrace Solar Preview</title>" in html
-        for name in ("terrace_tilted.glb", "terrace_flat.glb", "terrace_tilted_ar.glb", "terrace_flat_ar.glb"):
-            assert name in html
-            assert urllib.request.urlopen(base + name, timeout=2).read()[:4] == b"glTF"
-        assert 'href="ar.html"' in html
-        ar = urllib.request.urlopen(base + "ar.html", timeout=2).read().decode()
-        assert "<title>Roof Corner Placement</title>" in ar and "terrace_anchor.json" in ar
-        assert "solvePlacement" in urllib.request.urlopen(base + "placement.js", timeout=2).read().decode()
-        assert "layoutRoof" in urllib.request.urlopen(base + "roofgrid.js", timeout=2).read().decode()
-        assert urllib.request.urlopen(base + "panel_cells.png", timeout=2).read()[1:4] == b"PNG"
-        anchor = json.loads(urllib.request.urlopen(base + "terrace_anchor.json", timeout=2).read())
-        assert anchor["anchor_length_m"] > 5 and len(anchor["outline"][0]) > 3
+        assert 'url=tagar.html' in html
+        for page in ("tagar.html", "tags.html"):
+            src = urllib.request.urlopen(base + page, timeout=2).read().decode()
+            for ref in re.findall(r'(?:src|from)="\.?/?([\w./-]+?\.js)(?:\?[^"]*)?"', src):
+                assert urllib.request.urlopen(base + ref, timeout=2).status == 200, ref
+        assert urllib.request.urlopen(base + "bipv_shingle.jpg", timeout=2).read()[:2] == b"\xff\xd8"
     finally:
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+
+
+def test_site_has_no_legacy_roof_pages():
+    for name in ("ar.html", "roofgrid.js", "placement.js", "terrace_anchor.json", "terrace_tilted.glb", "panel_cells.png"):
+        assert not (PREVIEW / name).exists(), name

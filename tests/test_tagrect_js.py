@@ -260,7 +260,7 @@ def test_tagar_page_wiring():
                     "pointerdown", "pointermove", "pointerup", "fitFromTwo", "rectMoved(rect, r)", "lock(frame, r, true)",
                     "averageTwo(history)", "tagsMoved(rect.tags, r.tags)"):
         assert feature in html, feature
-    assert 'href="tagar.html"' in (PREVIEW / "index.html").read_text(encoding="utf-8")
+    assert 'url=tagar.html' in (PREVIEW / "index.html").read_text(encoding="utf-8")   # the site root opens the AR
 
 
 # ---------- integration: synthetic table photo through the real chain ----------

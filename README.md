@@ -48,24 +48,13 @@ ETH3D terrace dense cloud: `colmap image_undistorter` on `dslr_calibration_jpg` 
 - AR: `roof_panels.glb` (glTF 2.0, metres, Y-up, origin = roof-plane origin). Our own writer:
   Open3D's .glb writer emits invalid buffer views.
 
-## 3D / AR preview
+## Tabletop AR site (GitHub Pages)
 
-- Online (GitHub Pages, works with "View in AR" on phones): see the repository's Pages link.
+- Online: https://virajsanghavi007.github.io/AR-VR/ (opens `tagar.html`, the tabletop AR on 2 or 4 AprilTags;
+  `tags.html` checks printed tags). The Pages workflow publishes `preview/` on every push to main.
 - Local, any Windows PC with Python 3: double-click `run_preview.bat` (serves `preview/` on http://localhost:8765 and opens it).
-- Update the models: rerun `design_panels.py`, copy `outputs/<site>/roof_panels.glb` (3D view) and
-  `panels_ar.glb` (AR: panels only, no roof slab) into `preview/`, push; the Pages workflow republishes.
-- Panels are generated, not downloaded: aluminium frame + glass with a 120 half-cut cell texture, at the
-  exact layout size. AR offers life size (outdoors) or tabletop 1:20.
-- Corner-tap placement (`preview/ar.html`, WebXR + three.js, Android Chrome): tap real roof corner A, then B
-  (long edge of the outline, shown on a map); the design snaps onto them with outline and keep-outs drawn.
-  "True size" keeps metres and reports tapped vs design edge length; "Fit to taps" scales to the taps
-  (demo on any open space). Anchor data: `outputs/<site>/panels_anchor.json` -> `preview/terrace_anchor.json`.
-- Live layout (default mode of `ar.html`): tap A and B along the sunny edge, then every other roof corner in
-  order (any count, concave/L-shapes fine; close by tapping near A or "Close roof"). "Add obstacle": tap around
-  a tank/stair room (2 taps = box), panels keep the clearance (default 0.3 m) from it. `preview/roofgrid.js` checks each candidate panel (inside the roof, >= setback from its edges, >= clearance from obstacles) and fills the roof with real-size
-  panels (1.722 x 1.134 m, never scaled; count follows the roof), tilt slider 0-90 deg with winter-shadow row
-  gaps from the latitude. HUD shows panel count, kWp, measured side lengths and area.
-  Desktop check without a phone: open `ar.html` and run `__solar.simulate(corners, obstacles)` in the console; `__solar.tap([x,y,z])` / `press(id)` drive the tap flow.
+- The older roof pages (3D terrace viewer, 2-corner roof AR with a panel grid) were removed from the site;
+  they are in git history before the commit that removed them. `rooftop/ar_export.py` still writes the GLB files.
 
 ## AprilTags for real-world scale
 

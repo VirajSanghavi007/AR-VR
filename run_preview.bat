@@ -1,5 +1,5 @@
 @echo off
-rem Serve the solar panel 3D preview on http://localhost:%PORT% and open it.
+rem Serve the tabletop solar panel AR site (preview folder) on http://localhost:%PORT% and open it.
 rem Needs only Python 3 on PATH (no packages). Close this window to stop.
 rem Optional: set PORT=9000 before running; set NO_BROWSER=1 to skip opening it.
 setlocal

@@ -132,7 +132,8 @@ def test_tags_page_references_existing_files():
     for src in re.findall(r'(?:src|from)="\.?/?([\w./-]+?\.js)(?:\?[^"]*)?"', html):
         assert (PREVIEW / src).exists(), src
     assert 'dictionaryName: "APRILTAG_36h11"' in html
-    assert 'href="tags.html"' in (PREVIEW / "index.html").read_text(encoding="utf-8")
+    assert 'href="tags.html"' in (PREVIEW / "tagar.html").read_text(encoding="utf-8")
+    assert 'href="tagar.html"' in html
 
 
 # ---------- integration: real decode ----------
