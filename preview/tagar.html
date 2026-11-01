@@ -225,10 +225,6 @@ function buildScene() {
   scene.add(group);
 }
 
-const ringLine = (ring, y, color) => new THREE.LineLoop(
-  new THREE.BufferGeometry().setFromPoints(ring.map((p) => new THREE.Vector3(p[0], y, p[2]))),
-  new THREE.LineBasicMaterial({ color }));
-
 // One module at real size: cells drawn on a canvas, frame-coloured sides, tilted about its short
 // side with the low edge on the roof. A yellow footprint shows while it is selected.
 const textures = new Map();
@@ -324,11 +320,7 @@ function place() {
   group.clear();
   if (!design || !rect) return;
   inner = new THREE.Group();
-  const shape = new THREE.Shape(design.ring.map((p) => new THREE.Vector2(p[0], -p[2])));
-  const slab = new THREE.Mesh(new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2).translate(0, design.y, 0),
-    new THREE.MeshStandardMaterial({ color: 0x9aa3ad, transparent: true, opacity: 0.55, side: THREE.DoubleSide }));
-  inner.add(slab, ringLine(design.ring, design.y + 0.02, 0xe5483f));
-  design.keepouts.forEach((k) => inner.add(ringLine(k, design.y + 0.03, 0xf08c28)));
+  // only the panel is drawn: the scanned roof outline (grey slab, red ring, orange keep-outs) stays out of the view
   panelObj = buildPanel(lookByKey(panel.look));
   inner.add(panelObj);
   inner.position.set(-design.cx, -design.y, -design.cz);

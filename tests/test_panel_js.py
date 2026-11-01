@@ -173,3 +173,9 @@ def test_page_wires_glass_laminate_look():
     html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
     for hook in ("MeshPhysicalMaterial", "heightMap", "borderPx", "RoomEnvironment", "clearcoat", "bumpMap", "closeUp", "panelWorld"):
         assert hook in html, hook
+
+
+def test_page_draws_only_the_panel_not_the_roof_slab():
+    html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
+    assert "0x9aa3ad" not in html and "ShapeGeometry" not in html
+    assert "design.keepouts.forEach" not in html
