@@ -58,7 +58,7 @@ def projection(near=0.05, far=50.0):
 
 def to_pixel(c2w, pt):
     X, Y, Z = (np.linalg.inv(c2w) @ np.append(pt, 1))[:3]
-    return [W / 2 + F * X / -Z, H / 2 - F * Y / -Z]
+    return [float(W / 2 + F * X / -Z), float(H / 2 - F * Y / -Z)]
 
 
 col = lambda m: m.T.ravel().tolist()                          # column-major, like XRView matrices
@@ -344,6 +344,21 @@ def test_camera_read_hands_the_xr_target_back():
     assert save < raw < reset < back < body.index("return { w, h };")
 
 
+def test_page_locks_on_a_wall():
+    html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
+    body = html[html.index("function detectRect("):]
+    body = body[:body.index("\nfunction ")]
+    # before the lock the plane comes from the tags' printed size, checked against the hit-test plane
+    assert "surfacePlane(pick.tags.map((t) => tagCorners3D(t.corners, tagSize, cam.w, cam.h, proj, pose)), lastHit, pose.slice(12, 15))" in body
+    assert 'catch (e) { return "Hold still so the tags are sharp"; }' in body
+    assert "if (rect) { n = rect.n; p0 = rect.center; }" in body
+    assert body.index("r = plumbAxes(r);") < body.index("r.ids = key;")
+    assert "lastHit[" not in body and "hp[" not in body                 # the hit pose is no longer read directly
+    # no detected surface is fine: a plain wall rarely gets one
+    assert "} else if (!lastHit) {" not in html and "Move the phone slowly to find the table" not in html
+    assert "on a table or a wall: aim between the tags" in html
+
+
 # ---------- integration: synthetic table photo through the real chain ----------
 
 CHAIN = """
@@ -401,6 +416,57 @@ def chain(tmp_path):
     if out.returncode:
         raise RuntimeError(out.stderr)
     return json.loads(out.stdout)
+
+
+WALL_CHAIN = """
+require(process.argv[1] + "/vendor/js-aruco2/cv.js");
+const AR = require(process.argv[1] + "/tag36h11.js");
+const fs = require("fs");
+const job = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const raw = fs.readFileSync(process.argv[3]);
+import(require("url").pathToFileURL(process.argv[1] + "/tagrect.js").href).then((R) => {
+  const img = R.downsample(new Uint8Array(raw.buffer, raw.byteOffset, raw.length), job.w, job.h, true, job.maxPixels);
+  const found = new AR.Detector({ dictionaryName: "APRILTAG_36h11" }).detect(img);
+  const pick = R.chooseTags(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) })));
+  if (!pick.ok) { console.log(JSON.stringify(pick)); return; }
+  const worlds = pick.tags.map((t) => R.tagCorners3D(t.corners, 0.16, job.w, job.h, job.proj, job.pose));
+  const { n, p0, fromHit } = R.surfacePlane(worlds, job.hit, job.pose.slice(12, 15));
+  const eye = job.pose.slice(12, 15), avg = (w) => w.reduce((a, p) => a.map((v, i) => v + p[i] / 4), [0, 0, 0]);
+  const centres = worlds.map((w) => R.rayPlane({ origin: eye, dir: avg(w).map((v, i) => v - eye[i]) }, p0, n));
+  const rect = R.plumbAxes(R.fitRectangle(centres, n));
+  console.log(JSON.stringify({ ok: true, fromHit, n, rect, edges: worlds.map((w) => R.tagEdge(w)) }));
+});
+"""
+
+
+def test_wall_photo_locks_from_the_tags_alone(tmp_path, node_available):
+    """4 tags on the wall z = 0 (0.8 x 0.5 m apart), the hit-test plane on the floor below or absent: the
+    tags' own plane (from their printed size) gives the true rectangle, plumb, with v pointing down."""
+    eye = [0.15, 1.35, 1.1]
+    c2w = cam_to_world(eye, [0, 1.2, 0])
+    img = np.full((H, W), 170, np.uint8)
+    for tid, (cx, cy) in zip((0, 1, 2, 3), ([-0.4, 1.45], [0.4, 1.45], [0.4, 0.95], [-0.4, 0.95])):
+        t = T.tag_image(tid, cell_px=20)
+        s = t.shape[0]
+        world = [[cx - 0.1, cy + 0.1, 0], [cx + 0.1, cy + 0.1, 0], [cx + 0.1, cy - 0.1, 0], [cx - 0.1, cy - 0.1, 0]]
+        dst = np.float32([to_pixel(c2w, p) for p in world])
+        M = cv2.getPerspectiveTransform(np.float32([[0, 0], [s, 0], [s, s], [0, s]]), dst)
+        mask = cv2.warpPerspective(np.full_like(t, 255), M, (W, H)) > 0
+        img[mask] = cv2.warpPerspective(t, M, (W, H))[mask]
+    (tmp_path / "frame.bin").write_bytes(cv2.cvtColor(img[::-1], cv2.COLOR_GRAY2RGBA).tobytes())
+    for hit in (None, hit_pose([0, 0, 0.8], [0, 1, 0])):               # nothing found, or the floor below
+        job = {"w": W, "h": H, "proj": col(projection()), "pose": col(c2w), "hit": hit, "maxPixels": 2.6e6}
+        (tmp_path / "job.json").write_text(json.dumps(job))
+        out = subprocess.run(["node", "-e", WALL_CHAIN, str(PREVIEW), str(tmp_path / "job.json"), str(tmp_path / "frame.bin")],
+                             capture_output=True, text=True)
+        assert out.returncode == 0, out.stderr
+        r = json.loads(out.stdout)
+        assert r["ok"] and r["fromHit"] is False and np.allclose(r["n"], [0, 0, 1], atol=0.03)   # within 1.7 degrees
+        assert r["rect"]["width"] == pytest.approx(0.8, abs=0.015)
+        assert r["rect"]["height"] == pytest.approx(0.5, abs=0.015)
+        assert np.allclose(r["rect"]["center"], [0, 1.2, 0], atol=0.015)
+        assert np.allclose(r["rect"]["v"], [0, -1, 0], atol=0.02) and np.allclose(r["rect"]["u"], [1, 0, 0], atol=0.02)
+        assert np.allclose(r["edges"], 0.16, atol=0.008)
 
 
 def test_table_photo_gives_the_true_rectangle(tmp_path, node_available):
@@ -514,6 +580,122 @@ def test_level_normal_snaps_a_near_vertical_normal(node_available):
     assert np.allclose(run("R.levelNormal([0, 5, 0])"), [0, 1, 0])
     assert np.allclose(run("R.levelNormal([1, 0, 0])"), [1, 0, 0])
     assert run("R.levelNormal([0.1, 1, 0], 3)") != [0, 1, 0]           # custom tolerance
+
+
+def test_level_normal_plumbs_a_near_horizontal_normal(node_available):
+    t = np.radians(9.9); n = run(f"R.levelNormal([{np.cos(t)}, {np.sin(t)}, 0])")
+    assert np.allclose(n, [1, 0, 0])                                     # a wall leaning 9.9 degrees: plumb
+    t = np.radians(9.9); n = run(f"R.levelNormal([0, {-np.sin(t)}, {2 * np.cos(t)}])")
+    assert np.allclose(n, [0, 0, 1])                                     # leaning the other way, not unit length
+    t = np.radians(10.1); n = [float(np.cos(t)), float(np.sin(t)), 0]
+    assert np.allclose(run(f"R.levelNormal({n})"), n)                    # a real slope is kept
+    assert np.allclose(run("R.levelNormal([0.6, 0.08, 0.8])"), [0.6, 0, 0.8])   # the heading is kept
+
+
+def test_on_wall_splits_at_45_degrees(node_available):
+    for n, want in (([0, 1, 0], False), ([0, 0, 1], True), ([1, 0, 0], True), ([0, -1, 0], True),
+                    ([0, 1.01, 1], False), ([0, 0.99, 1], True), ([0, 5, 0.1], False)):
+        assert run(f"R.onWall({n})") is want, n
+
+
+def test_homography_maps_the_four_points(node_available):
+    src = [[-1, 1], [1, 1], [1, -1], [-1, -1]]
+    Hm = np.array([[0.9, 0.2, 0.1], [-0.1, 1.1, 0.3], [0.05, -0.02, 1]])
+    dst = [((Hm @ [x, y, 1])[:2] / (Hm @ [x, y, 1])[2]).tolist() for x, y in src]
+    h = np.array(run(f"R.homography({src}, {dst})")).reshape(3, 3)
+    assert np.allclose(h, Hm, atol=1e-9) and h[2, 2] == 1
+    p = h @ [0.3, -0.4, 1]
+    assert np.allclose(p[:2] / p[2], (Hm @ [0.3, -0.4, 1])[:2] / (Hm @ [0.3, -0.4, 1])[2])   # any point, not just the 4
+    # a pivot is needed: the first column of the system starts with zeros
+    assert np.allclose(run("R.homography([[0,0],[1,0],[1,1],[0,1]], [[0,0],[2,0],[2,2],[0,2]])"),
+                       [2, 0, 0, 0, 2, 0, 0, 0, 1], atol=1e-12)
+    with pytest.raises(RuntimeError, match="degenerate"):
+        run("R.homography([[0,0],[1,1],[2,2],[3,3]], [[0,0],[1,0],[1,1],[0,1]])")
+
+
+def wall_tag(center, size, yaw_deg=0):
+    """World corners (printed TL, TR, BR, BL) of an upright tag on the wall z = 0 facing +z, as lists."""
+    a, h = np.radians(yaw_deg), size / 2
+    R = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+    return [[*(np.array(center) + R @ c).tolist(), 0.0] for c in ([-h, h], [h, h], [h, -h], [-h, -h])]
+
+
+def test_tag_corners_3d_recovers_the_tag_from_its_pixels(node_available):
+    eye, size = [0.25, 1.35, 0.9], 0.16
+    c2w = cam_to_world(eye, [0, 1.2, 0])
+    for center, yaw in (([0.3, 1.4], 0), ([-0.3, 1.0], 30), ([0.05, 1.2], -90)):
+        world = wall_tag(center, size, yaw)
+        px = [to_pixel(c2w, p) for p in world]
+        got = np.array(run(f"R.tagCorners3D({px}, {size}, {W}, {H}, {col(projection())}, {col(c2w)})"))
+        assert np.allclose(got, world, atol=1e-6), (center, yaw)
+    # the scale comes from the printed size: the same pixels with a tag twice as big lie twice as far
+    world = wall_tag([0.3, 1.4], size)
+    px = [to_pixel(c2w, p) for p in world]
+    big = np.array(run(f"R.tagCorners3D({px}, {2 * size}, {W}, {H}, {col(projection())}, {col(c2w)})"))
+    assert np.allclose(big - eye, 2 * (np.array(world) - eye), atol=1e-6)
+    # on a table too, seen from above
+    c2w = cam_to_world(EYE, TARGET)
+    table = [[x, 0, z] for x, z in ([0.1, -0.2], [0.26, -0.2], [0.26, -0.04], [0.1, -0.04])]
+    got = run(f"R.tagCorners3D({[to_pixel(c2w, p) for p in table]}, {size}, {W}, {H}, {col(projection())}, {col(c2w)})")
+    assert np.allclose(got, table, atol=1e-6)
+
+
+def test_fit_plane(node_available):
+    rng = np.random.default_rng(3)
+    for n in ([0, 0, 1], [0, 1, 0], [1, 0, 0], [0.3, 0.8, -0.5]):
+        n = np.array(n) / np.linalg.norm(n)
+        a = np.cross(n, [0.6, 0.0, 0.8] if abs(n[1]) > 0.5 else [0, 1, 0]); a /= np.linalg.norm(a)
+        b = np.cross(n, a)
+        pts = [(np.array([1, 2, 3]) + s * a + t * b).tolist() for s, t in rng.uniform(-1, 1, (12, 2))]
+        r = run(f"R.fitPlane({pts})")
+        assert abs(np.dot(r["n"], n)) == pytest.approx(1, abs=1e-9), n
+        assert np.allclose(r["center"], np.mean(pts, axis=0))
+    with pytest.raises(RuntimeError, match="need 3 points"):
+        run("R.fitPlane([[0,0,0],[1,0,0]])")
+    with pytest.raises(RuntimeError, match="in a line"):
+        run("R.fitPlane([[0,0,0],[1,1,1],[2,2,2],[3,3,3]])")
+
+
+def hit_pose(pos, normal):
+    """A hit-test pose (16 numbers, column-major) whose y axis is the surface normal."""
+    m = np.eye(4); m[:3, 1] = np.array(normal) / np.linalg.norm(normal); m[:3, 3] = pos
+    return col(m)
+
+
+def test_surface_plane_takes_the_tags_plane_on_a_wall(node_available):
+    tags = [wall_tag(c, 0.16) for c in ([-0.3, 1.0], [0.3, 1.4])]
+    eye = [0.1, 1.3, 1.2]
+    for hit in ("null", hit_pose([0, 0, 0.8], [0, 1, 0])):                 # no surface, or the floor below
+        r = run(f"R.surfacePlane({tags}, {hit}, {eye})")
+        assert r["fromHit"] is False and np.allclose(r["n"], [0, 0, 1]) and r["p0"][2] == pytest.approx(0, abs=1e-12)
+    r = run(f"R.surfacePlane({tags}, null, [0.1, 1.3, -1.2])")           # seen from behind: faces the eye
+    assert np.allclose(r["n"], [0, 0, -1])
+    # a hit on the wall itself agrees, and wins (it is steadier), turned to face the eye
+    r = run(f"R.surfacePlane({tags}, {hit_pose([0, 1.2, 0.001], [0, 0, -1])}, {eye})")
+    assert r["fromHit"] is True and np.allclose(r["n"], [0, 0, 1]) and np.allclose(r["p0"], [0, 1.2, 0.001])
+
+
+def test_surface_plane_keeps_the_hit_on_a_table(node_available):
+    flat = lambda x, z: [[x - 0.08, 0.002, z - 0.08], [x + 0.08, 0, z - 0.08], [x + 0.08, -0.002, z + 0.08], [x - 0.08, 0, z + 0.08]]
+    tags = [flat(-0.3, 0.1), flat(0.3, -0.1)]
+    hit = hit_pose([0.01, 0, 0.02], [0.05, 1, 0])                         # 3 degrees off: still level
+    r = run(f"R.surfacePlane({tags}, {hit}, {EYE})")
+    assert r["fromHit"] is True and r["n"] == [0, 1, 0] and np.allclose(r["p0"], [0.01, 0, 0.02])
+    hit = hit_pose([0, 0, 0], [0.5, 1, 0])                                # 27 degrees off: the tags win
+    r = run(f"R.surfacePlane({tags}, {hit}, {EYE})")
+    assert r["fromHit"] is False and r["n"] == [0, 1, 0]
+    assert run(f"R.surfacePlane({tags}, {hit}, {EYE}, 30)")["fromHit"] is True   # custom tolerance
+
+
+def test_plumb_axes_points_v_down_the_wall(node_available):
+    base = {"n": [0, 0, 1], "center": [0, 1.2, 0], "width": 0.6, "height": 0.4}
+    for u, swap in (([1, 0, 0], False), ([0, 1, 0], True), ([-1, 0, 0], False), ([0, -1, 0], True)):
+        r = run(f"R.plumbAxes({json.dumps({**base, 'u': u})})")
+        assert np.allclose(r["v"], [0, -1, 0]) and np.allclose(r["u"], [1, 0, 0]), u
+        assert (r["width"], r["height"]) == ((0.4, 0.6) if swap else (0.6, 0.4)), u
+        assert r["center"] == base["center"]
+    t = {"n": [0, 1, 0], "u": [0, 0, 1], "v": [1, 0, 0], "width": 0.6, "height": 0.4}
+    assert run(f"R.plumbAxes({json.dumps(t)})") == t                       # a table is left as it was
 
 
 def test_fit_from_two_accepts_any_quarter_turn(node_available):

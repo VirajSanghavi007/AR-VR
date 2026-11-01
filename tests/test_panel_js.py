@@ -313,7 +313,7 @@ def test_page_wires_the_panel_array_and_power():
                  "$(b).oninput = () => { $(a).value = $(b).value; regrid(); };",
                  "  $(b).value = $(a).value;                                     // a reload may have kept the typed numbers\n}\nregrid();",
                  "relayout(panels, lookByKey(look), lookByKey(key))", "energy(panels.length, l.watts, sunHours())",
-                 "kWh/day", "W per hour over 24 h", 'caption(lookByKey(look), TILT_DEG, panels.length, sunHours())',
+                 "kWh/day", "W per hour over 24 h", 'caption(lookByKey(look), tiltNow(), panels.length, sunHours())',
                  "if (tap && !grabbed) sel = panelAt(t.roof)", "ring.visible = i === sel", "./snap.js?v=2", "pick(i)",
                  ".bar .grid[hidden] { display: none; }"):
         assert hook in html, hook
@@ -325,7 +325,11 @@ def test_page_wires_the_panel_array_and_power():
 
 def test_page_has_one_fixed_tilt_no_toggle():
     html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
-    assert "const TILT_DEG = 15," in html and "const deg = TILT_DEG," in html
+    assert "const TILT_DEG = 15," in html and "const deg = tiltNow()," in html
+    # on a wall the array mounts flush, the HUD says so and the sun comes from above (+z is down there)
+    assert "const tiltNow = () => (rect && onWall(rect.n) ? 0 : TILT_DEG);" in html
+    assert '`${tiltNow()}° tilt` : "flush on the wall"' in html
+    assert "(onWall(rect.n) ? -0.7 : 0.7) * R" in html
     for gone in ('id="b-tilted"', 'id="b-flat"', "Tilted 15°", ">Flat<", "chooseTilt", "TILTS", "tiltKey"):
         assert gone not in html, gone
 

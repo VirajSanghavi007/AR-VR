@@ -56,6 +56,10 @@ ETH3D terrace dense cloud: `colmap image_undistorter` on `dslr_calibration_jpg` 
   of the area; 2 tags sit at opposite corners or side by side (then the area is the square on that side, away
   from the phone). In the desktop emulator 6 cm tags locked an 80 x 50 cm layout from ~0.75 m, 5 cm from ~0.55 m;
   the 16 cm print is the safe default.
+- Table or wall: before the lock each tag's own pose comes from its printed size (tagrect.js tagCorners3D) and a
+  plane is fitted through all tag corners (surfacePlane). The phone's detected surface is used only when it agrees
+  within 20° (a table); a plain wall is rarely detected and the hit lands on the floor, so there the tags' plane is
+  used. On a wall the array hangs flush (no rack), rows run level and columns run down the wall (plumbAxes).
 - Tilted panels stand on a rail-and-leg rack and cast soft shadows on the table.
 - Panels: type the number of rows and columns (1-10 each, on the start page or in the AR bar; panel.js
   gridLayout), the array is laid out again keeping its heading. − / + / Fit scale the whole array (auto fit fills the tag rectangle). A two-finger twist (and

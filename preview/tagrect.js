@@ -166,10 +166,102 @@ export function mergeNested(markers) {
   return out.map(({ c, ...m }) => m);
 }
 
-// A hit-test normal within maxDeg of straight up is a level table: WebXR's local space has +y up
+// A surface normal within maxDeg of straight up is a level table: WebXR's local space has +y up
 // (gravity), so use exactly that instead of ARCore's per-frame estimate, which wobbles by degrees.
-export const levelNormal = (n, maxDeg = 10) =>
-  unit(n)[1] > Math.cos((maxDeg * Math.PI) / 180) ? [0, 1, 0] : unit(n);
+// Within maxDeg of horizontal it is a plumb wall: keep its heading, drop the lean.
+export function levelNormal(n, maxDeg = 10) {
+  const u = unit(n), r = (maxDeg * Math.PI) / 180;
+  if (u[1] > Math.cos(r)) return [0, 1, 0];
+  if (Math.abs(u[1]) < Math.sin(r)) return unit([u[0], 0, u[2]]);
+  return u;
+}
+
+// A surface more than 45 degrees off level (a wall): panels mount flush on it, not on a tilted rack.
+export const onWall = (n) => unit(n)[1] < Math.SQRT1_2;
+
+// Exact homography (h33 = 1) taking 4 points src [x, y] to dst [x, y]: 3x3, row-major.
+export function homography(src, dst) {
+  const A = [];
+  src.forEach(([x, y], i) => {
+    const [u, v] = dst[i];
+    A.push([x, y, 1, 0, 0, 0, -u * x, -u * y, u]);
+    A.push([0, 0, 0, x, y, 1, -v * x, -v * y, v]);
+  });
+  for (let c = 0; c < 8; c++) {                         // Gauss-Jordan with partial pivoting
+    let p = c;
+    for (let r = c + 1; r < 8; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    if (Math.abs(A[p][c]) < 1e-12) throw new Error("tag corners are degenerate");
+    [A[c], A[p]] = [A[p], A[c]];
+    for (let r = 0; r < 8; r++) {
+      if (r === c) continue;
+      const k = A[r][c] / A[c][c];
+      for (let j = c; j < 9; j++) A[r][j] -= k * A[c][j];
+    }
+  }
+  return [...A.map((row, i) => row[8] / A[i][i]), 1];
+}
+
+// World corners of one printed square tag of edge `size` from its 4 detector pixels (printed top-left,
+// top-right, bottom-right, bottom-left): the homography from the printed square to the camera rays is
+// its pose, so its distance comes from its known size and no detected surface is needed.
+export function tagCorners3D(px, size, width, height, proj, camToWorld) {
+  const inv = invert4(proj);
+  const rays = px.map(([x, y]) => {
+    const p = transform(inv, [(2 * x) / width - 1, 1 - (2 * y) / height, -1]);
+    return [p[0] / -p[2], p[1] / -p[2]];                // camera ray (a, b, -1)
+  });
+  const h = size / 2, model = [[-h, h], [h, h], [h, -h], [-h, -h]];
+  const H = homography(model, rays);
+  // camera point = k * (H (X, Y, 1)) with z negated (the camera looks down -z); k makes the columns unit length
+  const col = (j) => [H[j], H[3 + j], -H[6 + j]];
+  const k = 2 / (norm(col(0)) + norm(col(1)));
+  return model.map(([X, Y]) => transform(camToWorld, mul(add(add(mul(col(0), X), mul(col(1), Y)), col(2)), k)));
+}
+
+// Least-squares plane through points: centre and unit normal (the covariance's weakest direction).
+export function fitPlane(points) {
+  if (points.length < 3) throw new Error(`need 3 points for a plane, got ${points.length}`);
+  const c = mean(points);
+  let xx = 0, xy = 0, xz = 0, yy = 0, yz = 0, zz = 0;
+  for (const p of points) {
+    const [x, y, z] = sub(p, c);
+    xx += x * x; xy += x * y; xz += x * z; yy += y * y; yz += y * z; zz += z * z;
+  }
+  const dx = yy * zz - yz * yz, dy = xx * zz - xz * xz, dz = xx * yy - xy * xy;
+  const m = Math.max(dx, dy, dz);
+  if (!(m > 1e-18)) throw new Error("points are in a line, not a plane");
+  const n = m === dx ? [dx, xz * yz - xy * zz, xy * yz - xz * yy]
+          : m === dy ? [xz * yz - xy * zz, dy, xy * xz - yz * xx]
+          : [xy * yz - xz * yy, xy * xz - yz * xx, dz];
+  return { center: c, n: unit(n) };
+}
+
+// The surface the tags lie on, before the lock. tagWorlds = each tag's 4 world corners (tagCorners3D),
+// hit = the hit-test pose (16 numbers, or null), eye = camera position. The hit plane is the more steady,
+// so it wins when it agrees with the tags within maxDeg; a plain wall is rarely detected, and there the
+// hit lands on the floor instead, so the tags' own plane is used. The normal faces the camera.
+export function surfacePlane(tagWorlds, hit, eye, maxDeg = 20) {
+  const f = fitPlane(tagWorlds.flat());
+  let n = f.n;
+  if (dot(n, sub(eye, f.center)) < 0) n = mul(n, -1);
+  if (hit) {
+    const hn = unit([hit[4], hit[5], hit[6]]);
+    if (Math.abs(dot(hn, n)) > Math.cos((maxDeg * Math.PI) / 180))
+      return { p0: [hit[12], hit[13], hit[14]], n: levelNormal(dot(hn, n) < 0 ? mul(hn, -1) : hn), fromHit: true };
+  }
+  return { p0: f.center, n: levelNormal(n), fromHit: false };
+}
+
+// On a wall, turn the rectangle's axes by whole quarter turns so v points down the wall (u level),
+// the way a wall array hangs; a table rectangle is left as it was.
+export function plumbAxes(r) {
+  if (!onWall(r.n)) return r;
+  const n = unit(r.n), cands = [r.u, cross(n, r.u), mul(r.u, -1), mul(cross(n, r.u), -1)];
+  let best = 0;
+  cands.forEach((u, i) => { if (-cross(u, n)[1] > -cross(cands[best], n)[1]) best = i; });
+  const u = cands[best], odd = best % 2 === 1;
+  return { ...r, u, v: cross(u, n), width: odd ? r.height : r.width, height: odd ? r.width : r.height };
+}
 
 // The tags of one detection, whatever their ids and however many (2, 3 or 4), or why not.
 // markers: [{id, corners: [[x, y] x4]}]. More than `max` in view: the `max` biggest (nearest) win.

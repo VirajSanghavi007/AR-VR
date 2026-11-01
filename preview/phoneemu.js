@@ -52,14 +52,16 @@ export class PhoneEmulator {
 
   // tags = [{id, at: [x, z], yawDeg = 0}] flat on the table (y = 0); size = black square edge in metres.
   // Yaw 0 = printed upright with its top edge along +x and its top toward -z.
-  setTags(tags, size = 0.16) {
+  // wall: the tags hang on the wall z = 0 facing +z instead, at = [x, y], yaw 0 = upright.
+  setTags(tags, size = 0.16, wall = false) {
     const T = this.THREE;
     this.tags.clear();
     for (const t of tags) {
-      const m = new T.Mesh(new T.PlaneGeometry(size * 1.25, size * 1.25).rotateX(-Math.PI / 2),
-                           new T.MeshBasicMaterial({ map: this.texture(t.id) }));
-      m.position.set(t.at[0], 0.0005, t.at[1]);
-      m.rotation.y = ((t.yawDeg || 0) * Math.PI) / 180;
+      const g = new T.PlaneGeometry(size * 1.25, size * 1.25);
+      const m = new T.Mesh(wall ? g : g.rotateX(-Math.PI / 2), new T.MeshBasicMaterial({ map: this.texture(t.id) }));
+      if (wall) m.position.set(t.at[0], t.at[1], 0.0005);
+      else m.position.set(t.at[0], 0.0005, t.at[1]);
+      m.rotation[wall ? "z" : "y"] = ((t.yawDeg || 0) * Math.PI) / 180;
       this.tags.add(m);
     }
   }

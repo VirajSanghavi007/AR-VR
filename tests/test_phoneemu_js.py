@@ -54,6 +54,26 @@ def test_rng_repeats_and_is_roughly_normal(node_available):
     assert 0 < min(u) and max(u) < 1
 
 
+SET_TAGS = """(() => {
+  const THREE = {
+    PlaneGeometry: class { constructor(w, h) { this.size = [w, h]; this.rx = 0; } rotateX(a) { this.rx = a; return this; } },
+    Mesh: class { constructor(g, m) { this.g = g; this.position = { set: (...p) => { this.at = p; } }; this.rotation = {}; } },
+    MeshBasicMaterial: class { constructor(o) { this.o = o; } },
+  };
+  const out = [], fake = { THREE, texture: (id) => id, tags: { clear() { out.length = 0; }, add(m) { out.push(m); } } };
+  E.PhoneEmulator.prototype.setTags.call(fake, [{ id: 3, at: [0.2, 1.1], yawDeg: 90 }], 0.16, WALL);
+  return out.map((m) => ({ at: m.at, rx: m.g.rx, size: m.g.size, rot: m.rotation }));
+})()"""
+
+
+def test_set_tags_lays_them_on_the_table_or_hangs_them_on_the_wall(node_available):
+    [t] = run(SET_TAGS.replace("WALL", "false"))
+    assert t["at"] == [0.2, 0.0005, 1.1] and t["rx"] == pytest.approx(-np.pi / 2)
+    assert t["size"] == [pytest.approx(0.2)] * 2 and t["rot"] == {"y": pytest.approx(np.pi / 2)}
+    [t] = run(SET_TAGS.replace("WALL", "true"))                       # on the wall z = 0, facing +z, upright
+    assert t["at"] == [0.2, 1.1, 0.0005] and t["rx"] == 0 and t["rot"] == {"z": pytest.approx(np.pi / 2)}
+
+
 def test_drawn_tag_decodes_to_its_id(node_available, tmp_path):
     """Rasterize tagCells like the emulator's canvas does and run the page's detector on it."""
     script = tmp_path / "decode.mjs"
@@ -84,7 +104,8 @@ console.log(JSON.stringify(out));
 
 def test_page_exposes_the_emulator_hooks():
     html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
-    for hook in ("emuStart", "emuRun", "emuFrame", "detectStep", "PhoneEmulator", "levelNormal(["):
+    for hook in ("emuStart", "emuRun", "emuFrame", "detectStep", "PhoneEmulator", "surfacePlane(",
+                 "emu.setTags(tags, tagSize, wall);", "lastHit = hit ? emu.hit("):
         assert hook in html, hook
     js = (PREVIEW / "phoneemu.js").read_text(encoding="utf-8")
     for name in ("tagBits", "tagCells", "rng", "PhoneEmulator"):

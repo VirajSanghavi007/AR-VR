@@ -150,9 +150,9 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
 <script src="tag36h11.js?v=1"></script>
 <script type="module">
 import * as THREE from "three";
-import { PhoneEmulator, rng } from "./phoneemu.js?v=1";
+import { PhoneEmulator, rng } from "./phoneemu.js?v=2";
 import { pixelRay, rayPlane, fitRectangle, fitFromTwo, fitFromThree, tagAxis, alignAxes, rectMoved, tagEdge, fitScale, bestTurns,
-         scaleLabel, nextNiceScale, isStable, downsample, chooseTags, mostSeen, averageTwo, tagsMoved, levelNormal } from "./tagrect.js?v=6";
+         scaleLabel, nextNiceScale, isStable, downsample, chooseTags, mostSeen, averageTwo, tagsMoved, onWall, tagCorners3D, surfacePlane, plumbAxes } from "./tagrect.js?v=7";
 import { PANEL_LOOKS, lookByKey, nextLook, cellLayout, panelHit, twistDelta, isLongPress, clampToBox,
          yawDeg, heightMap, borderPx, moveBox, gridLayout, clampCount, arrayBounds, relayout,
          energy, mountParts, turnArray, cellShade, chamferCell, smoothLight } from "./panel.js?v=8";
@@ -394,9 +394,12 @@ function buildRack(obj, tiltDeg) {
 }
 
 // Pose the panels from `panels` without rebuilding them: position, yaw, tilt, rack, pick outline.
+// on a wall the panels mount flush; on a table they stand on the tilted rack
+const tiltNow = () => (rect && onWall(rect.n) ? 0 : TILT_DEG);
+
 function updatePanels() {
   if (!design) return;
-  const deg = TILT_DEG, a = (deg * Math.PI) / 180;
+  const deg = tiltNow(), a = (deg * Math.PI) / 180;
   panelObjs.forEach((obj, i) => {
     const p = panels[i], { tilt, mesh, ring, T } = obj.userData;
     obj.position.set(p.x, design.y, p.z);
@@ -425,7 +428,7 @@ function place() {
   group.add(turn);
   // sun high over one corner of the tags, its shadow box just covering them (in table metres)
   const R = Math.max(rect.width, rect.height);
-  sun.position.set(0.5 * R, 2 * R, 0.7 * R);
+  sun.position.set(0.5 * R, 2 * R, (onWall(rect.n) ? -0.7 : 0.7) * R);   // on a wall +z is down
   sun.target.position.set(0, 0, 0);
   Object.assign(sun.shadow.camera, { left: -R, right: R, top: R, bottom: -R, near: 0.01, far: 5 * R });
   sun.shadow.camera.updateProjectionMatrix();
@@ -447,7 +450,7 @@ function panelLine() {
                                                                  : "two fingers twist to turn all, tap a panel to pick it, long-press to move it";
   const kw = (w) => (w >= 1000 ? `${(w / 1000).toFixed(2)} kW` : `${w} W`);
   const [r, c] = gridSize();
-  return `<small>${panels.length} × ${l.name} (${r} row${r > 1 ? "s" : ""} × ${c} column${c > 1 ? "s" : ""}) ${l.w.toFixed(2)} × ${l.d.toFixed(2)} m, ~${l.watts} W each, ${TILT_DEG}° tilt` +
+  return `<small>${panels.length} × ${l.name} (${r} row${r > 1 ? "s" : ""} × ${c} column${c > 1 ? "s" : ""}) ${l.w.toFixed(2)} × ${l.d.toFixed(2)} m, ~${l.watts} W each, ${tiltNow() ? `${tiltNow()}° tilt` : "flush on the wall"}` +
     `${p ? `, picked one facing ${yawDeg(p.yaw)}°` : ""} · ${how}</small>` +
     `<small style="color:#9be5b4">power ${kw(e.peakW)} peak · ~${e.kwhDay.toFixed(1)} kWh/day · avg ~${Math.round(e.avgW)} W per hour over 24 h` +
     ` (~${Math.round(e.dayAvgW)} W in daylight, ${sunHours()} sun h)</small>`;
@@ -501,7 +504,7 @@ function showShot(rgba, w, h) {
   const c = document.createElement("canvas"), g = c.getContext("2d");
   c.width = w; c.height = h;
   g.putImageData(new ImageData(rgba, w, h), 0, 0);
-  const text = caption(lookByKey(look), TILT_DEG, panels.length, sunHours()), fs = Math.max(12, Math.round(w / 34)), band = fs * 2.2;
+  const text = caption(lookByKey(look), tiltNow(), panels.length, sunHours()), fs = Math.max(12, Math.round(w / 34)), band = fs * 2.2;
   g.fillStyle = "rgba(0,0,0,.6)"; g.fillRect(0, h - band, w, band);
   g.fillStyle = "#fff"; g.font = `600 ${fs}px sans-serif`; g.textBaseline = "middle";
   g.fillText(text, fs * 0.8, h - band / 2, w - fs * 1.6);
@@ -560,8 +563,15 @@ function detectRect(frame, view) {
   }
   if (key !== historyKey) { history = []; historyKey = key; }
   // before the lock: the hit-test plane; after it: the table the tags were found on
-  const hp = lastHit, n = rect ? rect.n : levelNormal([hp[4], hp[5], hp[6]]), p0 = rect ? rect.center : [hp[12], hp[13], hp[14]];
+  // after it: the plane it was found on; before it: the hit-test plane when it agrees with the tags' own
+  // (a table), else the tags' plane from their printed size (a plain wall, where the hit lands on the floor)
   const proj = Array.from(view.projectionMatrix), pose = Array.from(view.transform.matrix);
+  let n, p0;
+  if (rect) { n = rect.n; p0 = rect.center; }
+  else {
+    try { ({ n, p0 } = surfacePlane(pick.tags.map((t) => tagCorners3D(t.corners, tagSize, cam.w, cam.h, proj, pose)), lastHit, pose.slice(12, 15))); }
+    catch (e) { return "Hold still so the tags are sharp"; }
+  }
   const centers = [], edges = [], axes = [];
   for (const t of pick.tags) {
     const world = t.corners.map(([x, y]) => rayPlane(pixelRay(x, y, cam.w, cam.h, proj, pose), p0, n));
@@ -586,6 +596,7 @@ function detectRect(frame, view) {
     try { r = count === 3 ? fitFromThree(centers, n) : fitRectangle(centers, n); } catch (e) { return e.message; }
     r.tags = centers;
   }
+  r = plumbAxes(r);
   r.ids = key;
   if (r.angleErrDeg > MAX_ANGLE_ERR)
     return count === 2 ? `The 2 tags are off by ${r.angleErrDeg.toFixed(0)}°: lay them flat on the same surface, square to each other`
@@ -649,11 +660,10 @@ function detectStep(frame, view) {
     if (!view.camera) {
       if (!warnedCamera) $("hud").innerHTML = "This browser does not give AR pages the camera image<small>needs Chrome 107+ on Android with ARCore</small>";
       warnedCamera = true;
-    } else if (!lastHit) {
-      $("hud").innerHTML = "Move the phone slowly to find the table<small>the ring has to sit on the surface the tags are on</small>";
     } else {
+      // no surface found yet is fine: the tags give their own plane (a plain wall is rarely detected)
       const r = detectRect(frame, view);
-      if (typeof r === "string") $("hud").innerHTML = r + "<small>keep the ring on the table, between the tags</small>";
+      if (typeof r === "string") $("hud").innerHTML = r + "<small>on a table or a wall: aim between the tags</small>";
       else lock(frame, r);
     }
   }
@@ -684,7 +694,7 @@ $("start").onclick = async () => {
     $("overlay").classList.remove("on"); hitSource = null; relock(); renderer.setAnimationLoop(null);
   });
   relock();
-  $("hud").innerHTML = "Move the phone slowly to find the table<small>then aim between the tags</small>";
+  $("hud").innerHTML = "Aim between the tags<small>on a table or a wall, hold still a moment</small>";
   warnedCamera = false;
   renderer.setAnimationLoop((t, frame) => {
     if (frame && hitSource) {
@@ -871,13 +881,13 @@ window.__tagar = {
     return this.state();
   },
   emuRun({ tags, eye = [0, 0.75, 0.55], look = [0, 0, 0], steps = 12, shake = { mm: 4, deg: 0.4 },
-           trackMm = 1, normalDeg = 1 }) {
-    emu.setTags(tags, tagSize);
+           trackMm = 1, normalDeg = 1, wall = false, hit = true }) {
+    emu.setTags(tags, tagSize, wall);
     const log = [];
     for (let i = 0; i < steps; i++) {
       emu.aim(eye, look, emuR, shake);
       const view = emu.view(emuR, trackMm);
-      lastHit = emu.hit([look[0], look[2]], emuR, normalDeg);
+      lastHit = hit ? emu.hit([look[0], look[2]], emuR, normalDeg) : null;   // on a wall: the floor below, or nothing
       lastDetect = -1e9;
       detectStep({}, view);
       log.push(rect ? `locked ${rect.width.toFixed(3)} x ${rect.height.toFixed(3)} m` : $("hud").firstChild?.textContent || "");
