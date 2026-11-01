@@ -122,3 +122,54 @@ def test_page_uses_one_panel_not_the_grid():
     assert "GLTFLoader" not in html and "terrace_tilted_ar.glb" not in html
     for hook in ("TextureLoader", "look.texture", "buildPanel", "panelTexture", "cellLayout", "isLongPress", "twistDelta", 'id="o-look"', 'id="looks"'):
         assert hook in html, hook
+
+
+def grey(vals, w, h):
+    return [v for x in vals for v in (x, x, x, 255)]
+
+
+def hm(vals, w, h, blur=0, rim=0):
+    return run(f"Array.from(P.heightMap({json.dumps(grey(vals, w, h))}, {w}, {h}, {blur}, {rim}))")[0::4]
+
+
+def test_height_map_stretches_dark_joints_low_and_bright_faces_high(node_available):
+    assert hm([50, 100, 150, 100], 2, 2) == [0, 128, 255, 128]          # 127.5 rounds to 128 in a clamped byte
+
+
+def test_height_map_blur_bevels_an_edge(node_available):
+    vals = [0, 0, 60, 60, 60]
+    assert hm(vals, 5, 1) == [0, 0, 255, 255, 255]
+    assert hm(vals, 5, 1, blur=1) == [0, 85, 170, 255, 255]            # box blur: the step becomes a slope
+
+
+def test_height_map_rim_is_forced_low(node_available):
+    out = hm([100, 200] * 8, 4, 4, rim=1)                                # columns alternate 100 / 200
+    rows = [out[r * 4:(r + 1) * 4] for r in range(4)]
+    assert rows[0] == [0, 0, 0, 0] and rows[3] == [0, 0, 0, 0]
+    assert rows[1] == [0, 255, 0, 0] and rows[2] == [0, 255, 0, 0]
+
+
+def test_height_map_flat_image_does_not_divide_by_zero(node_available):
+    assert hm([77] * 4, 2, 2) == [0, 0, 0, 0]
+
+
+def test_height_map_rejects_wrong_size(node_available):
+    with pytest.raises(RuntimeError, match="w x h"):
+        run("P.heightMap([0,0,0,255], 2, 2)")
+
+
+def test_border_px_scales_with_face_width(node_available):
+    assert run("P.borderPx(14, 1.1, 512)") == 7
+    assert run("P.borderPx(0, 1.1, 512)") == 0
+
+
+def test_bipv_is_glass_laminate_with_ceramic_border_and_relief(node_available):
+    b = run('P.lookByKey("bipv")')
+    assert 9 <= b["thickMm"] <= 13 and 8 <= b["borderMm"] <= 25 and b["relief"] > 0 and b["edge"].startswith("#")
+    assert "thickMm" not in run('P.lookByKey("standard")')
+
+
+def test_page_wires_glass_laminate_look():
+    html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
+    for hook in ("MeshPhysicalMaterial", "heightMap", "borderPx", "RoomEnvironment", "clearcoat", "bumpMap", "closeUp", "panelWorld"):
+        assert hook in html, hook

@@ -142,7 +142,8 @@ import { PhoneEmulator, rng } from "./phoneemu.js?v=1";
 import { pixelRay, rayPlane, fitRectangle, fitFromTwo, tagAxis, alignAxes, rectMoved, tagEdge, fitScale, bestTurns,
          scaleLabel, nextNiceScale, isStable, downsample, pickTags, averageTwo, tagsMoved, levelNormal } from "./tagrect.js?v=4";
 import { PANEL_LOOKS, lookByKey, nextLook, cellLayout, panelHit, twistDelta, isLongPress, clampToBox,
-         yawDeg } from "./panel.js?v=2";
+         yawDeg, heightMap, borderPx } from "./panel.js?v=3";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { composite, caption, shotName } from "./snap.js?v=1";
 
 const DETECT_EVERY_MS = 250, FOLLOW_EVERY_MS = 400, HIT_GRACE_MS = 500, MAX_ANGLE_ERR = 12, EDGE_WARN = 0.15;
@@ -233,9 +234,21 @@ const ringLine = (ring, y, color) => new THREE.LineLoop(
 const textures = new Map();
 function panelTexture(look) {
   if (textures.has(look.key)) return textures.get(look.key);
-  if (look.texture) {                                          // BIPV: a picture of the wall material
-    const t = new THREE.TextureLoader().load(look.texture);
-    t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  if (look.texture) {                                          // BIPV: printed glass, drawn once the picture is in
+    const c = document.createElement("canvas"), b = document.createElement("canvas");
+    c.width = b.width = 512; c.height = b.height = Math.round((512 * look.d) / look.w);
+    const t = new THREE.CanvasTexture(c), bump = new THREE.CanvasTexture(b);
+    t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = bump.anisotropy = 8;
+    t.userData.bump = bump;
+    new THREE.TextureLoader().load(look.texture, (img) => {
+      const W = c.width, H = c.height, g = c.getContext("2d"), bw = borderPx(look.borderMm, look.w, W);
+      g.drawImage(img.image, 0, 0, W, H);
+      g.strokeStyle = "#241a17"; g.lineWidth = bw * 2; g.strokeRect(0, 0, W, H);          // fired ceramic border
+      g.strokeStyle = "rgba(255,255,255,.18)"; g.lineWidth = 1.5; g.strokeRect(bw, bw, W - 2 * bw, H - 2 * bw);
+      const hm = heightMap(g.getImageData(0, 0, W, H).data, W, H, 1, bw);
+      b.getContext("2d").putImageData(new ImageData(hm, W, H), 0, 0);
+      t.needsUpdate = true; bump.needsUpdate = true;
+    });
     textures.set(look.key, t);
     return t;
   }
@@ -258,14 +271,32 @@ function panelTexture(look) {
   return t;
 }
 
+let envMap = null;
+function reflections() {                                       // soft studio light for the glass to pick up
+  if (!envMap) envMap = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+  return envMap;
+}
+
 function buildPanel(look) {
-  const obj = new THREE.Group(), tilt = new THREE.Group();
-  const face = new THREE.MeshStandardMaterial({ map: panelTexture(look), roughness: 0.3, metalness: 0.15,
-                                                transparent: !look.gap && !look.texture, side: THREE.DoubleSide });
-  const edge = new THREE.MeshStandardMaterial({ color: look.frame, roughness: 0.5, metalness: 0.6 });
-  const T = 0.035, mesh = new THREE.Mesh(new THREE.BoxGeometry(look.w, T, look.d),
+  const obj = new THREE.Group(), tilt = new THREE.Group(), glass = !!look.texture;
+  const map = panelTexture(look);
+  const face = glass
+    ? new THREE.MeshPhysicalMaterial({ map, bumpMap: map.userData.bump, bumpScale: look.relief, roughness: 0.5, metalness: 0,
+                                       clearcoat: 1, clearcoatRoughness: 0.05, envMap: reflections(), envMapIntensity: 0.9 })
+    : new THREE.MeshStandardMaterial({ map, roughness: 0.3, metalness: 0.15,
+                                       transparent: !look.gap, side: THREE.DoubleSide });
+  const edge = glass
+    ? new THREE.MeshPhysicalMaterial({ color: look.edge, roughness: 0.12, metalness: 0, clearcoat: 1, envMap: reflections() })
+    : new THREE.MeshStandardMaterial({ color: look.frame, roughness: 0.5, metalness: 0.6 });
+  const T = glass ? look.thickMm / 1000 : 0.035, mesh = new THREE.Mesh(new THREE.BoxGeometry(look.w, T, look.d),
                                          [edge, edge, face, look.gap ? edge : face, edge, edge]);
   tilt.add(mesh);
+  if (glass) {                                                 // dark shadow line where the glass meets the wall
+    const back = new THREE.Mesh(new THREE.BoxGeometry(look.w - 0.03, 0.008, look.d - 0.03),
+                                new THREE.MeshStandardMaterial({ color: 0x14100e, roughness: 0.9 }));
+    back.position.y = -0.006;
+    tilt.add(back);
+  }
   obj.add(tilt);
   const sel = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(
     [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => new THREE.Vector3(a * (look.w / 2 + 0.05), 0.01, b * (look.d / 2 + 0.05)))),
@@ -723,6 +754,16 @@ window.__tagar = {
     c.getContext("2d").putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
     return { ids: detector.detect(img).map((m) => m.id), png: c.toDataURL() };
   },
+  // Desktop inspection (after simulate): put the camera at eye, aimed at the panel plus offset, and draw.
+  closeUp(eye = [0.04, 0.07, 0.09], at = [0, 0, 0]) {
+    const w = this.panelWorld();
+    camera.position.set(w[0] + eye[0], w[1] + eye[1], w[2] + eye[2]);
+    camera.lookAt(w[0] + at[0], w[1] + at[1], w[2] + at[2]);
+    camera.updateMatrixWorld(true);
+    return w;
+  },
+  // Panel centre in world metres (for aiming the emulated camera at it).
+  panelWorld() { const v = new THREE.Vector3(); scene.updateMatrixWorld(true); panelObj.getWorldPosition(v); return v.toArray(); },
   follow(centres, n = [0, 1, 0], edge = 0.16) { const r = fitRectangle(centres, n); r.edge = edge; lock({}, r, true); return this.state(); },
   state() {
     return { locked: !!rect, scale, fit: fitS, turns, label: scaleLabel(scale),

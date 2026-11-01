@@ -11,7 +11,10 @@ export const PANEL_LOOKS = [
   // Size matches the picture (815 x 1130 px, 0.72) so the bricks are not stretched. A patterned face
   // gives up output: ~120 W/m2 against ~220 W/m2 for a plain mono module.
   { key: "bipv", name: "BIPV brick", w: 1.1, d: 1.525, cols: 1, rows: 1, halfCut: false,
-    cell: "#8a3f2b", busbar: "#8a3f2b", gap: null, frame: "#6b3a2a", frameMm: 0, texture: "bipv_brick.jpg", watts: 200 },
+    cell: "#8a3f2b", busbar: "#8a3f2b", gap: null, frame: "#6b3a2a", frameMm: 0, texture: "bipv_brick.jpg", watts: 200,
+    // glass-glass laminate (real facade modules are ~10-12 mm), a dark fired-ceramic border round the
+    // printed face, and a teal glass edge; the mortar joints read as shallow relief under the glass
+    thickMm: 12, borderMm: 14, edge: "#35504c", relief: 1.6 },
 ];
 
 export const lookByKey = (key) => PANEL_LOOKS.find((l) => l.key === key) || PANEL_LOOKS[0];
@@ -65,3 +68,40 @@ export const clampToBox = (p, box) => [Math.min(box.maxX, Math.max(box.minX, p[0
 
 // Yaw in whole degrees 0..359 for the HUD.
 export const yawDeg = (yaw) => ((Math.round((yaw * 180) / Math.PI) % 360) + 360) % 360;
+
+// Height map for the relief under a printed face: luminance of an RGBA image (dark mortar = low),
+// blurred by `blur` pixels (box, so the joints are bevelled, not razor edges) and stretched to the
+// full 0..255 range. Returns grey RGBA of the same size. `rim` px of the outer edge are forced low
+// so the border sits down where the glass edge is.
+export function heightMap(rgba, w, h, blur = 1, rim = 0) {
+  if (rgba.length !== w * h * 4) throw new Error("image must be w x h RGBA");
+  const lum = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) lum[i] = 0.2126 * rgba[i * 4] + 0.7152 * rgba[i * 4 + 1] + 0.0722 * rgba[i * 4 + 2];
+  let src = lum;
+  if (blur > 0) {
+    const tmp = new Float32Array(w * h), out = new Float32Array(w * h), n = 2 * blur + 1;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      let t = 0;
+      for (let k = -blur; k <= blur; k++) t += lum[y * w + Math.min(w - 1, Math.max(0, x + k))];
+      tmp[y * w + x] = t / n;
+    }
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      let t = 0;
+      for (let k = -blur; k <= blur; k++) t += tmp[Math.min(h - 1, Math.max(0, y + k)) * w + x];
+      out[y * w + x] = t / n;
+    }
+    src = out;
+  }
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < src.length; i++) { lo = Math.min(lo, src[i]); hi = Math.max(hi, src[i]); }
+  const span = hi - lo || 1, res = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const inRim = x < rim || y < rim || x >= w - rim || y >= h - rim;
+    const v = inRim ? 0 : ((src[y * w + x] - lo) / span) * 255, o = (y * w + x) * 4;
+    res[o] = res[o + 1] = res[o + 2] = v; res[o + 3] = 255;
+  }
+  return res;
+}
+
+// Border width in image pixels for a face `faceM` metres wide drawn `px` pixels wide.
+export const borderPx = (borderMm, faceM, px) => Math.round((borderMm / 1000 / faceM) * px);
