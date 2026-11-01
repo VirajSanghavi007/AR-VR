@@ -197,12 +197,39 @@ def test_page_fits_the_panel_not_the_roof():
     html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
     assert "terrace_anchor.json" not in html and "m roof" not in html
     for hook in ("setDesign()", "arrayBounds(panels, l.w, l.d)", "moveBox(rect.width, rect.height, turns, scale, l.w, l.d)",
-                 "b.minX + design.cx", "b.minZ + design.cz", "clampToBox([t.roof[0] + grabOffset[0]", "panels shown", "./panel.js?v=6"):
+                 "b.minX + design.cx", "b.minZ + design.cz", "clampToBox([t.roof[0] + grabOffset[0]", "panels shown", "./panel.js?v=8"):
         assert hook in html, hook
 
 
 # ---------- several panels ----------
 W, D, G = 1.0, 1.6, 0.02
+
+
+def test_turn_array_swings_the_rows_round_their_centre(node_available):
+    assert run("P.turnArray([], 1)") == []
+    row = [{"x": 0, "z": 0, "yaw": 0}, {"x": 2, "z": 0, "yaw": 0}, {"x": 4, "z": 0.6, "yaw": 0.1, "k": 7}]
+    out = run(f"P.turnArray({json.dumps(row)}, Math.PI / 2)")
+    # mean centre (2, 0.2) stays put; a quarter turn (rotation.y) sends +x to -z, +z to +x
+    assert [v for p in out for v in (p["x"], p["z"])] == pytest.approx([1.8, 2.2, 1.8, 0.2, 2.4, -1.8])
+    assert [p["yaw"] for p in out] == pytest.approx([np.pi / 2, np.pi / 2, 0.1 + np.pi / 2])
+    assert out[2]["k"] == 7                                           # other fields kept
+    assert row[0] == {"x": 0, "z": 0, "yaw": 0}                       # input untouched (JSON copy, so check in node)
+    assert run("(() => { const a = [{x: 1, z: 0, yaw: 0}, {x: 3, z: 0, yaw: 0}]; P.turnArray(a, 1); return a[0].x; })()") == 1
+    # a neighbour stays a neighbour: same offset in each panel's own frame, so a turned row stays one row
+    two = [{"x": 0, "z": 0, "yaw": 0}, {"x": W + G, "z": 0, "yaw": 0}]
+    t = run(f"P.turnArray({json.dumps(two)}, 0.7)")
+    assert run(f"P.toPanelFrame([{t[1]['x']}, {t[1]['z']}], {json.dumps(t[0])})") == pytest.approx([W + G, 0], abs=1e-9)
+    assert run(f"P.overlaps({json.dumps(t[1])}, {json.dumps(t[0])}, {W}, {D})") is False
+    for a, b in zip(run(f"P.turnArray({json.dumps(two)}, 0)"), two):
+        assert a == pytest.approx(b)
+
+
+def test_page_twists_the_array_when_nothing_is_picked():
+    html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
+    assert "if (touches.size === 2) {" in html and "touches.size === 2 && sel >= 0" not in html
+    assert "if (sel >= 0) panels[sel].yaw += da; else panels = turnArray(panels, da);" in html
+    assert "if (sel >= 0) panels[sel].yaw -= PANEL_STEP; else panels = turnArray(panels, -PANEL_STEP);" in html
+    assert "turn the picked panel, or the whole array when none is picked" in html
 
 
 def test_overlaps_is_strict_so_touching_neighbours_are_free(node_available):
@@ -214,50 +241,25 @@ def test_overlaps_is_strict_so_touching_neighbours_are_free(node_available):
     assert run(f'P.overlaps({{x: 0, z: 1.5, yaw: 0}}, {json.dumps(a)}, {W}, {D})')
 
 
-def test_add_slot_goes_beside_the_panel_then_further_out(node_available):
-    assert run(f"P.addSlot([], {W}, {D})") == {"x": 0, "z": 0, "yaw": 0}
-    one = [{"x": 0, "z": 0, "yaw": 0}]
-    assert run(f"P.addSlot({json.dumps(one)}, {W}, {D})") == pytest.approx({"x": W + G, "z": 0, "yaw": 0})
-    # right taken: left; both taken: behind; then in front; then two along
-    row = one + [{"x": W + G, "z": 0, "yaw": 0}]
-    assert run(f"P.addSlot({json.dumps(row)}, {W}, {D}, 0)") == pytest.approx({"x": -(W + G), "z": 0, "yaw": 0})
-    row3 = row + [{"x": -(W + G), "z": 0, "yaw": 0}]
-    assert run(f"P.addSlot({json.dumps(row3)}, {W}, {D}, 0)") == pytest.approx({"x": 0, "z": D + G, "yaw": 0})
-    ring = row3 + [{"x": 0, "z": D + G, "yaw": 0}, {"x": 0, "z": -(D + G), "yaw": 0}]
-    assert run(f"P.addSlot({json.dumps(ring)}, {W}, {D}, 0)") == pytest.approx({"x": 2 * (W + G), "z": 0, "yaw": 0})
-    # from = which panel to add beside; out of range is clamped
-    assert run(f"P.addSlot({json.dumps(row)}, {W}, {D}, 1)") == pytest.approx({"x": 2 * (W + G), "z": 0, "yaw": 0})
-    assert run(f"P.addSlot({json.dumps(row)}, {W}, {D}, 9)") == pytest.approx({"x": 2 * (W + G), "z": 0, "yaw": 0})
-    assert run(f"P.addSlot({json.dumps(row)}, {W}, {D}, -3)") == pytest.approx({"x": -(W + G), "z": 0, "yaw": 0})
+def test_grid_layout_is_centred_rows_by_columns(node_available):
+    g = run(f"P.gridLayout(2, 3, {W}, {D})")
+    assert len(g) == 6 and all(p["yaw"] == 0 for p in g)
+    # row by row: columns along x one panel + gap apart, rows along z
+    assert [p["x"] for p in g] == pytest.approx([-(W + G), 0, W + G] * 2)
+    assert [p["z"] for p in g] == pytest.approx([-(D + G) / 2] * 3 + [(D + G) / 2] * 3)
+    assert run(f"P.gridLayout(1, 1, {W}, {D})") == [{"x": 0, "z": 0, "yaw": 0}]
+    assert run(f"P.gridLayout(3, 1, {W}, {D}, 0.5)")[2]["z"] == pytest.approx(D + 0.5)
+    b = run(f"P.arrayBounds(P.gridLayout(4, 5, {W}, {D}), {W}, {D})")
+    assert b == pytest.approx({"cx": 0, "cz": 0, "w": 5 * W + 4 * G, "d": 4 * D + 3 * G})
 
 
-def test_add_slot_follows_a_turned_panel(node_available):
-    # a panel turned 90 degrees: its own +x (across) now runs along roof -z (rotation.y turns +x toward -z)
-    q = run(f"P.addSlot([{{x: 1, z: 2, yaw: Math.PI / 2}}], {W}, {D})")
-    assert q == pytest.approx({"x": 1, "z": 2 - (W + G), "yaw": np.pi / 2})
-    assert not run(f"P.overlaps({json.dumps(q)}, {{x: 1, z: 2, yaw: Math.PI / 2}}, {W}, {D})")
-
-
-def test_rows_copy_and_drop_the_back_row(node_available):
-    row = [{"x": i * (W + G), "z": 0, "yaw": 0} for i in range(3)]
-    assert run(f"P.lastRow({json.dumps(row)}, {D})") == [0, 1, 2]
-    two = run(f"P.addRow({json.dumps(row)}, {D})")
-    assert len(two) == 6 and two[:3] == row
-    assert [p["z"] for p in two[3:]] == pytest.approx([D + G] * 3) and [p["x"] for p in two[3:]] == pytest.approx([0, W + G, 2 * (W + G)])
-    assert run(f"P.lastRow({json.dumps(two)}, {D})") == [3, 4, 5]
-    # a ragged back row (one panel) is what gets copied
-    ragged = row + [{"x": 0, "z": D + G + 0.3, "yaw": 0}]
-    assert run(f"P.lastRow({json.dumps(ragged)}, {D})") == [3]
-    assert len(run(f"P.addRow({json.dumps(ragged)}, {D})")) == 5
-    # a panel nudged less than half a depth back still counts as the back row
-    nudged = row[:2] + [{"x": 2 * (W + G), "z": 0.3, "yaw": 0}]
-    assert run(f"P.lastRow({json.dumps(nudged)}, {D})") == [0, 1, 2]
-    # but more than half a depth back is a row of its own
-    assert run(f"P.lastRow([{{x: 0, z: 0, yaw: 0}}, {{x: 0, z: {0.6 * D}, yaw: 0}}], {D})") == [1]
-    assert run(f"P.removeRow({json.dumps(two)}, {D})") == row
-    assert run(f"P.removeRow({json.dumps(row)}, {D})") == row          # the only row stays
-    # pure: the input is not changed
-    assert run(f"(() => {{ const a = {json.dumps(row)}; P.addRow(a, {D}); P.removeRow(a, {D}); return a.length; }})()") == 3
+def test_clamp_count_reads_typed_numbers(node_available):
+    assert run('P.clampCount("3", 1)') == 3
+    assert run('P.clampCount("2.6", 1)') == 3
+    assert run('P.clampCount("", 4)') == 4 and run('P.clampCount("abc", 2)') == 2
+    assert run('P.clampCount("0", 1)') == 1 and run('P.clampCount("-5", 7)') == 1
+    assert run('P.clampCount("99", 1)') == 10 and run('P.clampCount("10", 1)') == 10
+    assert run('P.clampCount("50", 1, 1, 20)') == 20 and run('P.clampCount("1", 5, 2)') == 2
 
 
 def test_array_bounds_cover_every_corner(node_available):
@@ -289,30 +291,43 @@ def test_energy_from_sun_hours_and_losses(node_available):
 
 
 def test_pattern_smoke_builds_a_clean_grid(node_available):
-    # smoke: grow a 4 x 3 array the way the buttons do and check nothing overlaps and the bounds are tight
+    # smoke: lay out a 3 x 4 array from typed numbers, turn it, and check nothing overlaps and the bounds are tight
     code = f"""(() => {{
-      let a = [{{x: 0, z: 0, yaw: 0}}];
-      for (let i = 0; i < 3; i++) a.push(P.addSlot(a, {W}, {D}, a.length - 1));
-      a = P.addRow(P.addRow(a, {D}), {D});
-      const clash = a.some((p, i) => a.some((q, j) => i !== j && P.overlaps(p, q, {W}, {D})));
-      return {{ n: a.length, clash, b: P.arrayBounds(a, {W}, {D}) }};
+      const a = P.gridLayout(P.clampCount("3", 1), P.clampCount("4", 1), {W}, {D});
+      const t = P.turnArray(a, Math.PI / 2);
+      const clash = (x) => x.some((p, i) => x.some((q, j) => i !== j && P.overlaps(p, q, {W}, {D})));
+      return {{ n: a.length, clash: clash(a) || clash(t), b: P.arrayBounds(a, {W}, {D}), bt: P.arrayBounds(t, {W}, {D}) }};
     }})()"""
     out = run(code)
     assert out["n"] == 12 and not out["clash"]
     assert out["b"]["w"] == pytest.approx(4 * W + 3 * G) and out["b"]["d"] == pytest.approx(3 * D + 2 * G)
+    assert out["bt"]["w"] == pytest.approx(out["b"]["d"]) and out["bt"]["d"] == pytest.approx(out["b"]["w"])
 
 
 def test_page_wires_the_panel_array_and_power():
     html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
-    for hook in ('id="o-add"', 'id="o-del"', 'id="o-row"', 'id="o-unrow"', 'id="sun"', '"o-add", "o-del", "o-row", "o-unrow"',
-                 "panels.push(addSlot(panels, l.w, l.d, sel >= 0 ? sel : panels.length - 1))",
-                 "panels.splice(sel >= 0 ? sel : panels.length - 1, 1)", "panels = addRow(panels", "panels = removeRow(panels",
+    for hook in ('id="rows"', 'id="cols"', 'id="o-rows"', 'id="o-cols"', 'id="o-grid"', 'id="sun"', '["o-grid", "o-minus",',
+                 'const gridSize = () => [clampCount($("rows").value, 1), clampCount($("cols").value, 1)];',
+                 "panels = turnArray(gridLayout(r, c, l.w, l.d), yaw);",
+                 '[["rows", "o-rows"], ["cols", "o-cols"]]', "$(a).oninput = () => { $(b).value = $(a).value; regrid(); };",
+                 "$(b).oninput = () => { $(a).value = $(b).value; regrid(); };",
+                 "  $(b).value = $(a).value;                                     // a reload may have kept the typed numbers\n}\nregrid();",
                  "relayout(panels, lookByKey(look), lookByKey(key))", "energy(panels.length, l.watts, sunHours())",
-                 "kWh/day", "W per hour over 24 h", 'caption(lookByKey(look), TILTS[tiltKey], panels.length, sunHours())',
-                 '$("o-del").disabled = panels.length < 2', "if (tap && !grabbed) sel = panelAt(t.roof)",
-                 "ring.visible = i === sel", "./snap.js?v=2", "pick(i)"):
+                 "kWh/day", "W per hour over 24 h", 'caption(lookByKey(look), TILT_DEG, panels.length, sunHours())',
+                 "if (tap && !grabbed) sel = panelAt(t.roof)", "ring.visible = i === sel", "./snap.js?v=2", "pick(i)",
+                 ".bar .grid[hidden] { display: none; }"):
         assert hook in html, hook
+    for gone in ('id="o-add"', 'id="o-del"', 'id="o-row"', 'id="o-unrow"', "addSlot", "addRow", "removeRow", "lastRow",
+                 "+ Panel", "+ Row"):
+        assert gone not in html, gone
     assert "const panel = " not in html and "panelObj " not in html
+
+
+def test_page_has_one_fixed_tilt_no_toggle():
+    html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
+    assert "const TILT_DEG = 15," in html and "const deg = TILT_DEG," in html
+    for gone in ('id="b-tilted"', 'id="b-flat"', "Tilted 15°", ">Flat<", "chooseTilt", "TILTS", "tiltKey"):
+        assert gone not in html, gone
 
 
 # ---------- mountParts: the rack under the panel ----------
@@ -372,3 +387,60 @@ def test_page_builds_the_rack_from_mount_parts():
     html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
     for hook in ("mountParts(", "function buildRack(", "obj.userData.rackTilt !== deg", "castShadow = true"):
         assert hook in html, hook
+
+
+# ---------- realism: face texture helpers and the light ----------
+
+def test_cell_shade_varies_a_little_and_repeats(node_available):
+    k = run("Array.from({length: 120}, (_, i) => P.cellShade(i))")
+    assert all(0.94 - 1e-9 <= v <= 1.06 + 1e-9 for v in k)
+    assert max(k) - min(k) > 0.08                       # really varies, not one flat tint
+    assert len({round(v, 6) for v in k}) > 100
+    assert run("P.cellShade(7)") == run("P.cellShade(7)")
+    assert all(0.8 - 1e-9 <= v <= 1.2 + 1e-9 for v in run("Array.from({length: 50}, (_, i) => P.cellShade(i, 0.2))"))
+    assert run("P.cellShade(3, 0)") == 1
+
+
+def test_chamfer_cell_cuts_only_the_wafer_corners(node_available):
+    full = run("P.chamferCell(0, 0, 10, 20, 2)")
+    assert full == [[2, 0], [8, 0], [10, 2], [10, 18], [8, 20], [2, 20], [0, 18], [0, 2]]
+    assert run("P.chamferCell(0, 0, 10, 20, 2, false, true)") == [[0, 0], [10, 0], [10, 18], [8, 20], [2, 20], [0, 18]]
+    assert run("P.chamferCell(0, 0, 10, 20, 2, true, false)") == [[2, 0], [8, 0], [10, 2], [10, 20], [0, 20], [0, 2]]
+    assert run("P.chamferCell(0, 0, 10, 20, 2, false, false)") == [[0, 0], [10, 0], [10, 20], [0, 20]]
+    assert run("P.chamferCell(5, 7, 10, 20, 2)")[0] == [7, 7]
+    # the cut never passes the middle of a side
+    assert run("P.chamferCell(0, 0, 4, 20, 9)")[:2] == [[2, 0], [2, 0]]
+    assert run("P.chamferCell(0, 0, 20, 4, 9)")[2] == [20, 2]
+
+
+def test_smooth_light_eases_and_clamps(node_available):
+    prev = {"color": [1, 1, 1], "intensity": 1.8}
+    one = run(f"P.smoothLight({json.dumps(prev)}, [3, 3, 1.5], 1)")
+    assert one["color"] == pytest.approx([1, 1, 0.5]) and one["intensity"] == pytest.approx(2.5)     # clamped to hi
+    assert run(f"P.smoothLight({json.dumps(prev)}, [0.1, 0.2, 0.2], 1)")["intensity"] == pytest.approx(0.6)   # lo
+    assert run(f"P.smoothLight({json.dumps(prev)}, [1.2, 1.2, 1.2], 1)")["intensity"] == pytest.approx(1.2)
+    step = run(f"P.smoothLight({json.dumps(prev)}, [2, 1, 1])")             # default k = 0.08 of the way
+    assert step["intensity"] == pytest.approx(1.8 + 0.08 * 0.2)
+    assert step["color"] == pytest.approx([1, 1 - 0.08 * 0.5, 1 - 0.08 * 0.5])
+    # no light, or nonsense: keep what we had
+    assert run(f"P.smoothLight({json.dumps(prev)}, [0, 0, 0])") == prev
+    assert run(f"P.smoothLight({json.dumps(prev)}, [NaN, NaN, NaN])") == prev
+    # repeated steps settle on the target without overshoot
+    s = run(f"(() => {{ let l = {json.dumps(prev)}; for (let i = 0; i < 200; i++) l = P.smoothLight(l, [1, 1, 1]); return l; }})()")
+    assert s["intensity"] == pytest.approx(1.0, abs=1e-4)
+
+
+def test_page_lights_and_draws_the_panels_realistically():
+    html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
+    for hook in ("renderer.toneMapping = THREE.ACESFilmicToneMapping;", '"dom-overlay", "light-estimation"]',
+                 "session.requestLightProbe().then((p) => { lightProbe = p; })", "lightProbe = null; light = { ...SUN };",
+                 "if (lightProbe) matchLight(frame.getLightEstimate(lightProbe));",
+                 "light = smoothLight(light, [i.x, i.y, i.z]);", "sun.color.setRGB(...light.color);",
+                 "sun.intensity = light.intensity;", "hemi.intensity = light.intensity * SKY_PER_SUN;",
+                 "const W = 1024, H = Math.round((W * look.d) / look.w)",
+                 "const top = !look.halfCut || row % 2 === 0, bottom = !look.halfCut || row % 2 === 1;",
+                 "chamferCell(x, y, w, h, w * 0.07, top, bottom), k = cellShade(i);", "for (let k2 = 1; k2 <= 9; k2++)",
+                 "roughness: 0.45, metalness: 0, envMap: reflections(), envMapIntensity: 0.7"):
+        assert hook in html, hook
+    # the sun keeps its place over the tags: the estimate never moves it (a swinging glint was the flicker)
+    assert "primaryLightDirection" not in html

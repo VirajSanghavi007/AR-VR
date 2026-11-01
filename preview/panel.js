@@ -125,33 +125,20 @@ export function overlaps(a, b, w, d) {
   return Math.abs(u) < w - 1e-6 && Math.abs(v) < d - 1e-6;
 }
 
-// Where one more panel goes: beside panel `from` (right, left, behind, in front, then further out),
-// turned like it, on the first spot that is free.
-export function addSlot(panels, w, d, from = panels.length - 1, gap = GAP_M) {
-  if (!panels.length) return { x: 0, z: 0, yaw: 0 };
-  const p = panels[Math.min(panels.length - 1, Math.max(0, from))], c = Math.cos(p.yaw), s = Math.sin(p.yaw);
-  for (let k = 1; ; k++) {
-    for (const [u, v] of [[k * (w + gap), 0], [-k * (w + gap), 0], [0, k * (d + gap)], [0, -k * (d + gap)]]) {
-      const q = { x: p.x + u * c + v * s, z: p.z - u * s + v * c, yaw: p.yaw };   // panel frame back to roof
-      if (!panels.some((o) => overlaps(q, o, w, d))) return q;
-    }
-  }
+// A rows x cols grid of panels (rows stacked along z, columns along x), one gap apart, centred on
+// the origin, all at yaw 0. Rows run front to back, so row r sits behind row r - 1.
+export function gridLayout(rows, cols, w, d, gap = GAP_M) {
+  const out = [];
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++)
+      out.push({ x: (c - (cols - 1) / 2) * (w + gap), z: (r - (rows - 1) / 2) * (d + gap), yaw: 0 });
+  return out;
 }
 
-// Indices of the back row: panels within half a panel of the largest z.
-export function lastRow(panels, d) {
-  const zmax = Math.max(...panels.map((p) => p.z));
-  return panels.flatMap((p, i) => (p.z > zmax - d / 2 ? [i] : []));
-}
-
-// Pattern: copy the back row one row further back. Returns a new array.
-export const addRow = (panels, d, gap = GAP_M) =>
-  panels.concat(lastRow(panels, d).map((i) => ({ ...panels[i], z: panels[i].z + d + gap })));
-
-// Drop the back row, unless it is the only one. Returns a new array.
-export function removeRow(panels, d) {
-  const back = new Set(lastRow(panels, d));
-  return back.size === panels.length ? panels.slice() : panels.filter((_, i) => !back.has(i));
+// A typed count: whole number between lo and hi; anything that is not a number gives the fallback.
+export function clampCount(v, fallback, lo = 1, hi = 10) {
+  const n = Math.round(parseFloat(v));
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
 }
 
 // Footprint of the whole array (turned panels count by their corners): centre and size, metres.
@@ -165,6 +152,17 @@ export function arrayBounds(panels, w, d) {
     }
   }
   return { cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, w: x1 - x0, d: z1 - z0 };
+}
+
+// Turn the whole array by da (rotation.y radians) about the mean of the panel centres, so rows stay
+// rows: every centre swings round it and every panel turns with it. Returns a new array.
+export function turnArray(panels, da) {
+  const cx = panels.reduce((t, p) => t + p.x, 0) / panels.length, cz = panels.reduce((t, p) => t + p.z, 0) / panels.length;
+  const c = Math.cos(da), s = Math.sin(da);
+  return panels.map((p) => {
+    const dx = p.x - cx, dz = p.z - cz;
+    return { ...p, x: cx + dx * c + dz * s, z: cz - dx * s + dz * c, yaw: p.yaw + da };
+  });
 }
 
 // Another look has another size: stretch the spacing so neighbours stay one gap apart.
@@ -204,4 +202,38 @@ export function mountParts(look, tiltDeg, { lift = 0.15, bar = 0.04, inset = 0.2
   }
   parts.push({ x: 0, y: R.Y * 0.55, z: R.Z, sx: xs[1] - xs[0], sy: bar * 0.6, sz: bar * 0.6, rotX: 0 });  // rear brace
   return { y, parts };
+}
+
+// ---------- realism: the Standard face texture and the light ----------
+
+// Cell i's brightness factor: real cells differ slightly in tint, so a flat colour looks printed.
+// Deterministic (a hash of i), between 1 - spread and 1 + spread.
+export function cellShade(i, spread = 0.06) {
+  const h = Math.sin((i + 1) * 12.9898) * 43758.5453;
+  return 1 + spread * (2 * (h - Math.floor(h)) - 1);
+}
+
+// Outline of one mono cell (px rectangle x, y, w, h) with its corners cut by `cut` px: a full
+// cell's four corners are chamfered, a half-cut cell keeps square corners along the cut, so
+// `top` / `bottom` say which edge is a wafer edge. Returns [[x, y], ...] clockwise.
+export function chamferCell(x, y, w, h, cut, top = true, bottom = true) {
+  const k = Math.min(cut, w / 2, h / 2), pts = [];
+  if (top) pts.push([x + k, y], [x + w - k, y]); else pts.push([x, y], [x + w, y]);
+  if (bottom) pts.push([x + w, y + h - k], [x + w - k, y + h], [x + k, y + h], [x, y + h - k]);
+  else pts.push([x + w, y + h], [x, y + h]);
+  if (top) pts.splice(2, 0, [x + w, y + k]), pts.push([x, y + k]);
+  return pts;
+}
+
+// One step of easing the sun towards the phone's light estimate (WebXR primaryLightIntensity, rgb,
+// any scale): colour normalised to its brightest channel, brightness clamped to lo..hi, and both
+// moved a fraction k of the way per frame so the panels never flash as the estimate jumps.
+export function smoothLight(prev, rgb, k = 0.08, lo = 0.6, hi = 2.5) {
+  const m = Math.max(rgb[0], rgb[1], rgb[2]);
+  if (!(m > 0)) return prev;
+  const target = { color: rgb.map((v) => v / m), intensity: Math.min(hi, Math.max(lo, m)) };
+  return {
+    color: prev.color.map((v, i) => v + k * (target.color[i] - v)),
+    intensity: prev.intensity + k * (target.intensity - prev.intensity),
+  };
 }

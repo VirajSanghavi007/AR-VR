@@ -128,4 +128,4 @@ def test_page_wires_the_photo_button():
         assert hook in html, hook
     assert re.search(r"if \(view && wantShot\) takeShot\(frame, view\);", html)
     assert "~${l.watts} W" in html
-    assert "caption(lookByKey(look), TILTS[tiltKey], panels.length, sunHours())" in html
+    assert "caption(lookByKey(look), TILT_DEG, panels.length, sunHours())" in html

@@ -61,6 +61,12 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
 .bar button.primary { background: #1f9d55; }
 .bar button[hidden] { display: none; }
 .bar button:disabled { opacity: .4; }
+.bar .grid { flex: 1 1 100%; display: flex; gap: 8px; }
+.bar .grid[hidden] { display: none; }
+.bar .grid label { flex: 1; display: flex; align-items: center; gap: 8px; border-radius: 8px; padding: 6px 10px;
+                   background: rgba(12, 18, 26, .8); color: #fff; font: 600 .9rem var(--sans); }
+.bar .grid input { flex: 1; min-width: 0; font: 600 1.05rem var(--mono); padding: 6px; border: 1px solid #4a5868;
+                   border-radius: 6px; background: #0c121a; color: #fff; text-align: center; }
 #shot { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 10px; padding: 16px;
         background: rgba(10, 14, 20, .92); pointer-events: auto; }
 #shot[hidden] { display: none; }
@@ -87,22 +93,20 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
         <b>3 tags</b> at 3 corners; <b>4 tags</b> at all 4 corners.</li>
       <li>Press <b>Start AR</b>, move the phone until the ring sits on the surface, then aim between the tags so all of them are in view.</li>
       <li>A solar panel snaps into the rectangle, scaled to fill it (− and + pick a round 1:N scale). It is pinned to the table: walk around it, it stays put. Move the tags and it follows them.</li>
-      <li><b>+ Panel</b> adds one beside the picked panel (or the last one), <b>− Panel</b> removes the picked one. <b>+ Row</b> copies the back row one row further back, <b>− Row</b> takes it away. While the scale is on auto fit, the whole array is resized to fill the tags.</li>
-      <li><b>Tap a panel</b> to pick it; <b>long-press</b> and drag to move it; with it picked up, put a <b>second finger</b> down and twist to turn it. <b>Look</b> changes the panel type, <b>−</b> / <b>+</b> / <b>Fit</b> set the scale.</li>
+      <li>Type how many <b>rows</b> and <b>columns</b> of panels you want (below, or in AR at the bottom). The array is laid out again at once; while the scale is on auto fit, it is resized to fill the tags.</li>
+      <li><b>Tap a panel</b> to pick it; <b>long-press</b> and drag to move it; <b>twist two fingers</b> to turn the picked panel, or the whole array when none is picked. <b>Look</b> changes the panel type, <b>−</b> / <b>+</b> / <b>Fit</b> set the scale.</li>
       <li>The top bar shows the array's peak power and a rough energy estimate: kWh per day and the average watts (Wh per hour) over the day, from the peak sun hours below and ~20% losses.</li>
       <li><b>Photo</b> saves what the phone sees with the panels in it, captioned with the panel type, count, power and energy, to share with the client.</li>
     </ol>
     <div class="row">
       <label class="f">Printed tag size (mm)<input id="size" type="number" inputmode="decimal" min="10" max="2000" step="1" value="160"></label>
       <label class="f">Peak sun hours / day<input id="sun" type="number" inputmode="decimal" min="1" max="9" step="0.5" value="5"></label>
+      <label class="f">Rows of panels<input id="rows" type="number" inputmode="numeric" min="1" max="10" step="1" value="1"></label>
+      <label class="f">Columns of panels<input id="cols" type="number" inputmode="numeric" min="1" max="10" step="1" value="1"></label>
     </div>
     <div>
       <p class="label">Panel type</p>
       <div class="seg looks" role="group" aria-label="Panel type" id="looks"></div>
-    </div>
-    <div class="seg" role="group" aria-label="Panel tilt">
-      <button id="b-tilted" aria-pressed="true">Tilted 15°</button>
-      <button id="b-flat" aria-pressed="false">Flat</button>
     </div>
     <p class="note">Tag size is the black square's edge. It is only a check: the app measures each tag in AR and warns if the surface was misjudged.</p>
   </div>
@@ -117,10 +121,10 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
   <div id="touch"></div>
   <div class="hud" id="hud">Move the phone slowly to find the surface</div>
   <div class="bar">
-    <button id="o-add" hidden>+ Panel</button>
-    <button id="o-del" hidden>− Panel</button>
-    <button id="o-row" hidden>+ Row</button>
-    <button id="o-unrow" hidden>− Row</button>
+    <div class="grid" id="o-grid" hidden>
+      <label>Rows<input id="o-rows" type="number" inputmode="numeric" min="1" max="10" step="1" value="1"></label>
+      <label>Columns<input id="o-cols" type="number" inputmode="numeric" min="1" max="10" step="1" value="1"></label>
+    </div>
     <button id="o-minus" class="big" hidden aria-label="Smaller model">−</button>
     <button id="o-fit" hidden>Fit</button>
     <button id="o-plus" class="big" hidden aria-label="Bigger model">+</button>
@@ -150,15 +154,15 @@ import { PhoneEmulator, rng } from "./phoneemu.js?v=1";
 import { pixelRay, rayPlane, fitRectangle, fitFromTwo, fitFromThree, tagAxis, alignAxes, rectMoved, tagEdge, fitScale, bestTurns,
          scaleLabel, nextNiceScale, isStable, downsample, chooseTags, mostSeen, averageTwo, tagsMoved, levelNormal } from "./tagrect.js?v=6";
 import { PANEL_LOOKS, lookByKey, nextLook, cellLayout, panelHit, twistDelta, isLongPress, clampToBox,
-         yawDeg, heightMap, borderPx, moveBox, addSlot, addRow, removeRow, lastRow, arrayBounds, relayout,
-         energy, mountParts } from "./panel.js?v=6";
+         yawDeg, heightMap, borderPx, moveBox, gridLayout, clampCount, arrayBounds, relayout,
+         energy, mountParts, turnArray, cellShade, chamferCell, smoothLight } from "./panel.js?v=8";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { composite, caption, shotName } from "./snap.js?v=2";
 
 const DETECT_EVERY_MS = 250, FOLLOW_EVERY_MS = 400, HIT_GRACE_MS = 500, MAX_ANGLE_ERR = 12, EDGE_WARN = 0.15;
-const TILTS = { tilted: 15, flat: 0 }, TOUCH_SLOP_M = 0.012, PANEL_STEP = Math.PI / 12;
+const TILT_DEG = 15, TOUCH_SLOP_M = 0.012, PANEL_STEP = Math.PI / 12;
 const $ = (id) => document.getElementById(id);
-let design = null, tiltKey = "tilted";
+let design = null;
 // the panels, in roof metres: centre x, z on the roof plane, yaw = rotation.y; all of one look.
 // sel = index of the picked panel, -1 for none.
 let look = PANEL_LOOKS[0].key, panels = [{ x: 0, z: 0, yaw: 0 }], sel = -1;
@@ -188,13 +192,6 @@ for (const l of PANEL_LOOKS) {
   b.onclick = () => chooseLook(l.key);
   $("looks").appendChild(b);
 }
-function chooseTilt(key) {
-  tiltKey = key;
-  for (const k of Object.keys(TILTS)) $("b-" + k).setAttribute("aria-pressed", String(k === key));
-  if (rect) updatePanels();
-}
-$("b-tilted").onclick = () => chooseTilt("tilted");
-$("b-flat").onclick = () => chooseTilt("flat");
 
 // What auto fit sizes into the tag rectangle: the footprint of the whole array (metres), centred on it.
 const setDesign = () => { const l = lookByKey(look), b = arrayBounds(panels, l.w, l.d); design = { y: 0, cx: b.cx, cz: b.cz, w: b.w, d: b.d }; };
@@ -221,7 +218,10 @@ let lastProj = null, lastPose = null, simulated = false;
 chooseLook(look);
 // historyKey = the tag ids the history was built from; seenCounts = tags per frame lately (mostSeen)
 let tagSize = 0.16, history = [], historyKey = "", seenCounts = [], lastHit = null, lastHitAt = 0, lastDetect = 0;
-let sun = null, shadowCatcher = null;
+let sun = null, hemi = null, shadowCatcher = null, lightProbe = null;
+// the sun's colour and strength, eased towards the phone's light estimate (smoothLight) when it has one
+const SUN = { color: [1, 1, 1], intensity: 1.8 }, SKY_PER_SUN = 1.5 / 1.8;
+let light = { ...SUN };
 let flipY = true, flipKnown = false, detector = null, lastEdge = 0, emuCamera = null, emu = null, emuR = null;
 
 function buildScene() {
@@ -232,12 +232,16 @@ function buildScene() {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // filmic response: bright frames and glass highlights roll off like a camera image instead of clipping
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.25;
   document.body.appendChild(renderer.domElement);
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera();
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x777777, 1.5));
+  hemi = new THREE.HemisphereLight(0xdfe9f5, 0x6b6257, SUN.intensity * SKY_PER_SUN);   // cool sky, warm table bounce
+  scene.add(hemi);
   // the sun rides in the tag rectangle's frame (added in place()), so the shadows fall the same way on any table
-  sun = new THREE.DirectionalLight(0xffffff, 1.8);
+  sun = new THREE.DirectionalLight(0xffffff, SUN.intensity);
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);
   sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.002;
@@ -252,6 +256,17 @@ function buildScene() {
   group = new THREE.Group();
   group.matrixAutoUpdate = false;
   scene.add(group);
+}
+
+// The room's light from ARCore: the sun takes its colour and strength (eased, clamped), the sky follows;
+// its direction stays over the tags' corner, so the shadows never swing with the estimate.
+function matchLight(est) {
+  if (!est) return;
+  const i = est.primaryLightIntensity;
+  light = smoothLight(light, [i.x, i.y, i.z]);
+  sun.color.setRGB(...light.color);
+  sun.intensity = light.intensity;
+  hemi.intensity = light.intensity * SKY_PER_SUN;
 }
 
 // One module at real size: cells drawn on a canvas, frame-coloured sides, tilted about its short
@@ -277,21 +292,41 @@ function panelTexture(look) {
     textures.set(look.key, t);
     return t;
   }
-  const W = 256, H = Math.round((W * look.d) / look.w), c = document.createElement("canvas");
+  // Standard: white backsheet showing between chamfered mono cells, each cell a touch different in
+  // tint with a faint sheen towards its centre, fine silver fingers, thin busbars, a bevelled frame
+  const W = 1024, H = Math.round((W * look.d) / look.w), c = document.createElement("canvas");
   c.width = W; c.height = H;
   const g = c.getContext("2d");
   if (look.gap) { g.fillStyle = look.gap; g.fillRect(0, 0, W, H); }
-  const f = (look.frameMm / 1000 / look.w) * W;
-  g.fillStyle = look.frame;
-  g.fillRect(0, 0, W, f); g.fillRect(0, H - f, W, f); g.fillRect(0, 0, f, H); g.fillRect(W - f, 0, f, H);
-  for (const cell of cellLayout(look)) {
-    g.fillStyle = look.cell;
-    g.fillRect(cell.x * W, cell.y * H, cell.w * W, cell.h * H);
+  const base = new THREE.Color(look.cell), rgb = (col, k) => `rgb(${[col.r, col.g, col.b].map((v) => Math.round(Math.min(1, v * k) * 255))})`;
+  cellLayout(look).forEach((cell, i) => {
+    const x = cell.x * W, y = cell.y * H, w = cell.w * W, h = cell.h * H, row = Math.floor(i / look.cols);
+    // half-cut: a pair of rows is one wafer, cut across the middle, so only its outer corners are chamfered
+    const top = !look.halfCut || row % 2 === 0, bottom = !look.halfCut || row % 2 === 1;
+    const pts = chamferCell(x, y, w, h, w * 0.07, top, bottom), k = cellShade(i);
+    const sheen = g.createLinearGradient(x, y, x + w, y + h);
+    sheen.addColorStop(0, rgb(base, k * 0.92)); sheen.addColorStop(0.5, rgb(base, k * 1.12)); sheen.addColorStop(1, rgb(base, k * 0.95));
+    g.fillStyle = sheen;
+    g.beginPath(); pts.forEach(([px, py], j) => (j ? g.lineTo(px, py) : g.moveTo(px, py))); g.closePath(); g.fill();
+    g.save(); g.clip();
+    g.fillStyle = "rgba(170,182,196,.10)";                                     // fingers: hair-thin, across the busbars
+    for (let fy = y + 2; fy < y + h; fy += 3.2) g.fillRect(x, fy, w, 0.6);
     g.fillStyle = look.busbar;
-    for (let k = 1; k <= 3; k++) g.fillRect((cell.x + (cell.w * k) / 4) * W - 0.5, cell.y * H, 1, cell.h * H);
-  }
+    for (let k2 = 1; k2 <= 9; k2++) g.fillRect(x + (w * k2) / 10 - 0.6, y, 1.2, h);
+    g.restore();
+  });
+  const f = (look.frameMm / 1000 / look.w) * W, fr = new THREE.Color(look.frame);
+  const bevel = (x0, y0, x1, y1, light) => {                                  // lit outer edge, shaded inner lip
+    const gr = g.createLinearGradient(x0, y0, x1, y1);
+    gr.addColorStop(0, rgb(fr, light ? 1.12 : 0.8)); gr.addColorStop(0.6, rgb(fr, 1)); gr.addColorStop(1, rgb(fr, 0.62));
+    return gr;
+  };
+  g.fillStyle = bevel(0, 0, 0, f, true); g.fillRect(0, 0, W, f);
+  g.fillStyle = bevel(0, H, 0, H - f, false); g.fillRect(0, H - f, W, f);
+  g.fillStyle = bevel(0, 0, f, 0, true); g.fillRect(0, f, f, H - 2 * f);
+  g.fillStyle = bevel(W, 0, W - f, 0, false); g.fillRect(W - f, f, f, H - 2 * f);
   const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
   textures.set(look.key, t);
   return t;
 }
@@ -310,7 +345,7 @@ function buildPanel(look) {
                                        clearcoat: 1, clearcoatRoughness: 0.05, envMap: reflections(), envMapIntensity: 0.9 })
     // glass over the cells: a soft reflection of the room instead of a hard sun glint, which on a flat
     // glossy face lit the whole panel up and blacked it out again as the phone shook
-    : new THREE.MeshStandardMaterial({ map, roughness: 0.45, metalness: 0, envMap: reflections(), envMapIntensity: 0.5,
+    : new THREE.MeshStandardMaterial({ map, roughness: 0.45, metalness: 0, envMap: reflections(), envMapIntensity: 0.7,
                                        side: THREE.DoubleSide });
   const edge = glass
     ? new THREE.MeshPhysicalMaterial({ color: look.edge, roughness: 0.12, metalness: 0, clearcoat: 1, envMap: reflections() })
@@ -361,7 +396,7 @@ function buildRack(obj, tiltDeg) {
 // Pose the panels from `panels` without rebuilding them: position, yaw, tilt, rack, pick outline.
 function updatePanels() {
   if (!design) return;
-  const deg = TILTS[tiltKey], a = (deg * Math.PI) / 180;
+  const deg = TILT_DEG, a = (deg * Math.PI) / 180;
   panelObjs.forEach((obj, i) => {
     const p = panels[i], { tilt, mesh, ring, T } = obj.userData;
     obj.position.set(p.x, design.y, p.z);
@@ -409,9 +444,10 @@ function place() {
 function panelLine() {
   const l = lookByKey(look), p = panels[sel], e = energy(panels.length, l.watts, sunHours());
   const how = grabbed ? "drag to move, second finger to turn" : p ? "two fingers twist to turn, tap elsewhere to let go"
-                                                                 : "tap a panel to pick it, long-press to move it";
+                                                                 : "two fingers twist to turn all, tap a panel to pick it, long-press to move it";
   const kw = (w) => (w >= 1000 ? `${(w / 1000).toFixed(2)} kW` : `${w} W`);
-  return `<small>${panels.length} × ${l.name} ${l.w.toFixed(2)} × ${l.d.toFixed(2)} m, ~${l.watts} W each, ${TILTS[tiltKey]}° tilt` +
+  const [r, c] = gridSize();
+  return `<small>${panels.length} × ${l.name} (${r} row${r > 1 ? "s" : ""} × ${c} column${c > 1 ? "s" : ""}) ${l.w.toFixed(2)} × ${l.d.toFixed(2)} m, ~${l.watts} W each, ${TILT_DEG}° tilt` +
     `${p ? `, picked one facing ${yawDeg(p.yaw)}°` : ""} · ${how}</small>` +
     `<small style="color:#9be5b4">power ${kw(e.peakW)} peak · ~${e.kwhDay.toFixed(1)} kWh/day · avg ~${Math.round(e.avgW)} W per hour over 24 h` +
     ` (~${Math.round(e.dayAvgW)} W in daylight, ${sunHours()} sun h)</small>`;
@@ -421,15 +457,13 @@ function report() {
   const cm = (m) => (m * scale * 100).toFixed(0);
   const fit = Math.abs(scale - fitS) < 1e-9 ? " (auto fit)" : "";
   const edge = lastEdge ? ` · tag edge ${(lastEdge * 1000).toFixed(0)} mm (printed ${(tagSize * 1000).toFixed(0)})` : "";
-  $("o-del").disabled = panels.length < 2;
-  $("o-unrow").disabled = lastRow(panels, lookByKey(look).d).length === panels.length;
   $("hud").innerHTML = `Scale ${scaleLabel(scale)}${fit}` +
     panelLine() + `<small>tags ${(rect.width * 100).toFixed(1)} × ${(rect.height * 100).toFixed(1)} cm · panels shown ${cm(design.w)} × ${cm(design.d)} cm${edge}</small>` +
     (Math.abs(lastEdge - tagSize) / tagSize > EDGE_WARN
       ? `<small style="color:#ffb86b">The tags measure off from the printed size: the ring was probably not on the table. Press Find tags again with the ring between the tags.</small>` : "");
 }
 
-const BUTTONS = ["o-add", "o-del", "o-row", "o-unrow", "o-minus", "o-fit", "o-plus", "o-look", "o-pturn", "o-turn", "o-shot", "o-relock"];
+const BUTTONS = ["o-grid", "o-minus", "o-fit", "o-plus", "o-look", "o-pturn", "o-turn", "o-shot", "o-relock"];
 function setButtons(locked) {
   BUTTONS.forEach((id) => { $(id).hidden = !locked; });
 }
@@ -467,7 +501,7 @@ function showShot(rgba, w, h) {
   const c = document.createElement("canvas"), g = c.getContext("2d");
   c.width = w; c.height = h;
   g.putImageData(new ImageData(rgba, w, h), 0, 0);
-  const text = caption(lookByKey(look), TILTS[tiltKey], panels.length, sunHours()), fs = Math.max(12, Math.round(w / 34)), band = fs * 2.2;
+  const text = caption(lookByKey(look), TILT_DEG, panels.length, sunHours()), fs = Math.max(12, Math.round(w / 34)), band = fs * 2.2;
   g.fillStyle = "rgba(0,0,0,.6)"; g.fillRect(0, h - band, w, band);
   g.fillStyle = "#fff"; g.font = `600 ${fs}px sans-serif`; g.textBaseline = "middle";
   g.fillText(text, fs * 0.8, h - band / 2, w - fs * 1.6);
@@ -493,12 +527,15 @@ function readCamera(frame, view) {
   if (!tex || !w || !h) return null;
   if (!pixels || pixels.length !== w * h * 4) pixels = new Uint8Array(w * h * 4);
   fb = fb || gl.createFramebuffer();
-  const prev = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+  const prev = gl.getParameter(gl.FRAMEBUFFER_BINDING), target = renderer.getRenderTarget();
   gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
   gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
   gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
   renderer.resetState();          // raw GL calls above: three.js's cached GL state is stale until reset
+  // resetState also forgets the XR layer target three set for this frame; without it the frame's render goes
+  // to the hidden page canvas and the panels blink out every camera read
+  renderer.setRenderTarget(target);
   return { w, h };
 }
 
@@ -629,7 +666,7 @@ $("start").onclick = async () => {
   if (!renderer) buildScene();
   try {
     session = await navigator.xr.requestSession("immersive-ar", {
-      requiredFeatures: ["hit-test"], optionalFeatures: ["camera-access", "anchors", "dom-overlay"],
+      requiredFeatures: ["hit-test"], optionalFeatures: ["camera-access", "anchors", "dom-overlay", "light-estimation"],
       domOverlay: { root: $("overlay") } });
   } catch (e) { $("status").textContent = "AR could not start: " + e.message; return; }
   detector = new AR.Detector({ dictionaryName: "APRILTAG_36h11" });
@@ -641,6 +678,8 @@ $("start").onclick = async () => {
   const viewer = await session.requestReferenceSpace("viewer");
   try { hitSource = await session.requestHitTestSource({ space: viewer, entityTypes: ["plane", "point"] }); }
   catch (e) { hitSource = await session.requestHitTestSource({ space: viewer }); }
+  lightProbe = null; light = { ...SUN };
+  if (session.requestLightProbe) session.requestLightProbe().then((p) => { lightProbe = p; }).catch(() => {});
   session.addEventListener("end", () => {
     $("overlay").classList.remove("on"); hitSource = null; relock(); renderer.setAnimationLoop(null);
   });
@@ -657,6 +696,7 @@ $("start").onclick = async () => {
       const view = pose && pose.views[0];
       if (view) { lastProj = Array.from(view.projectionMatrix); lastPose = Array.from(view.transform.matrix); }
       if (view) detectStep(frame, view);
+      if (lightProbe) matchLight(frame.getLightEstimate(lightProbe));
       if (view && wantShot) takeShot(frame, view);
       if (rect && anchor && frame.trackedAnchors && frame.trackedAnchors.has(anchor)) {
         const ap = frame.getPose(anchor.anchorSpace, refSpace);
@@ -681,17 +721,25 @@ $("o-shot").onclick = () => { wantShot = true; };
 $("shot-close").onclick = () => { $("shot").hidden = true; };
 $("shot-share").onclick = () => navigator.share({ files: [shotFile], title: "Solar panel preview" }).catch(() => {});
 $("o-look").onclick = () => chooseLook(nextLook(look, 1));
-$("o-pturn").onclick = () => { for (const p of sel >= 0 ? [panels[sel]] : panels) p.yaw -= PANEL_STEP; updatePanels(); };
-// array: + Panel beside the picked (or last) one, - Panel drops the picked (or last) one; rows copy or drop the back row
-$("o-add").onclick = () => {
-  const l = lookByKey(look);
-  panels.push(addSlot(panels, l.w, l.d, sel >= 0 ? sel : panels.length - 1));
-  sel = panels.length - 1;
-  refit();
+$("o-pturn").onclick = () => {
+  if (sel >= 0) panels[sel].yaw -= PANEL_STEP; else panels = turnArray(panels, -PANEL_STEP);
+  updatePanels();
 };
-$("o-del").onclick = () => { if (panels.length > 1) panels.splice(sel >= 0 ? sel : panels.length - 1, 1); sel = -1; refit(); };
-$("o-row").onclick = () => { panels = addRow(panels, lookByKey(look).d); sel = -1; refit(); };
-$("o-unrow").onclick = () => { panels = removeRow(panels, lookByKey(look).d); sel = -1; refit(); };
+// array: rows x columns typed in (start card or AR bar, kept in sync), laid out again as a grid that
+// keeps the array's current heading
+const gridSize = () => [clampCount($("rows").value, 1), clampCount($("cols").value, 1)];
+function regrid() {
+  const l = lookByKey(look), [r, c] = gridSize(), yaw = panels.length ? panels[0].yaw : 0;
+  panels = turnArray(gridLayout(r, c, l.w, l.d), yaw);
+  sel = -1;
+  refit();
+}
+for (const [a, b] of [["rows", "o-rows"], ["cols", "o-cols"]]) {
+  $(a).oninput = () => { $(b).value = $(a).value; regrid(); };
+  $(b).oninput = () => { $(a).value = $(b).value; regrid(); };
+  $(b).value = $(a).value;                                     // a reload may have kept the typed numbers
+}
+regrid();
 
 // ---------- touching the panel ----------
 // Screen point -> roof point [x, z] in roof metres, through the current camera onto the locked table plane.
@@ -742,9 +790,14 @@ $("touch").addEventListener("pointermove", (e) => {
   if (!t) return;
   const prev = [...touches.values()].map((q) => q.roof);
   t.x = e.clientX; t.y = e.clientY; t.roof = roofPoint(t.x, t.y);
-  if (touches.size === 2 && sel >= 0) {
+  if (touches.size === 2) {
+    // two fingers twist the picked panel, or the whole array when none is picked
     const now = [...touches.values()].map((q) => q.roof);
-    if (prev.every(Boolean) && now.every(Boolean)) { panels[sel].yaw += twistDelta(prev[0], prev[1], now[0], now[1]); updatePanels(); }
+    if (prev.every(Boolean) && now.every(Boolean)) {
+      const da = twistDelta(prev[0], prev[1], now[0], now[1]);
+      if (sel >= 0) panels[sel].yaw += da; else panels = turnArray(panels, da);
+      updatePanels();
+    }
   } else if (touches.size === 1 && grabbed && t.roof) {
     const p = panels[sel];
     [p.x, p.z] = clampToBox([t.roof[0] + grabOffset[0], t.roof[1] + grabOffset[1]], inRect());

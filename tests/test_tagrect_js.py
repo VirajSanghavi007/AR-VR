@@ -333,6 +333,17 @@ def test_tagar_page_wiring():
     assert 'url=tagar.html' in (PREVIEW / "index.html").read_text(encoding="utf-8")   # the site root opens the AR
 
 
+def test_camera_read_hands_the_xr_target_back():
+    # the blink: resetState drops the XR layer target, so the frame rendered to the hidden canvas every camera read
+    html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
+    body = html[html.index("function readCamera("):html.index("function detectRect(")]
+    save = body.index("target = renderer.getRenderTarget()")
+    raw = body.index("gl.bindFramebuffer(gl.FRAMEBUFFER, fb)")
+    reset = body.index("renderer.resetState();")
+    back = body.index("renderer.setRenderTarget(target);")
+    assert save < raw < reset < back < body.index("return { w, h };")
+
+
 # ---------- integration: synthetic table photo through the real chain ----------
 
 CHAIN = """

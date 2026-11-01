@@ -57,8 +57,9 @@ ETH3D terrace dense cloud: `colmap image_undistorter` on `dslr_calibration_jpg` 
   from the phone). In the desktop emulator 6 cm tags locked an 80 x 50 cm layout from ~0.75 m, 5 cm from ~0.55 m;
   the 16 cm print is the safe default.
 - Tilted panels stand on a rail-and-leg rack and cast soft shadows on the table.
-- Panels: + Panel / − Panel add beside or remove the picked panel (tap to pick), + Row / − Row copy or drop
-  the back row, − / + / Fit scale the whole array (auto fit fills the tag rectangle). The HUD shows peak kW,
+- Panels: type the number of rows and columns (1-10 each, on the start page or in the AR bar; panel.js
+  gridLayout), the array is laid out again keeping its heading. − / + / Fit scale the whole array (auto fit fills the tag rectangle). A two-finger twist (and
+  Panel 15°) turns the picked panel, or the whole array about its centre when none is picked. The HUD shows peak kW,
   kWh/day and the average W per hour (24 h and daylight) from the "Peak sun hours / day" input with 20 % losses:
   a rough estimate, not a yield simulation.
 - Local, any Windows PC with Python 3: double-click `run_preview.bat` (serves `preview/` on http://localhost:8765 and opens it).
