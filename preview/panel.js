@@ -2,14 +2,16 @@
 // Positions are design (roof) metres on the roof plane as [x, z]; yaw is three.js rotation.y in radians.
 
 // Real module sizes (metres): w across the short side, d along the long side (portrait).
+// watts: typical rated power for a module of that size and kind (a guide for the pitch, not a datasheet).
 export const PANEL_LOOKS = [
   // Standard module: dark mono cells, silver frame.
   { key: "standard", name: "Standard", w: 1.038, d: 1.755, cols: 6, rows: 20, halfCut: true,
-    cell: "#1a2232", busbar: "#5c6878", gap: "#e9edf1", frame: "#b9c0c8", frameMm: 30 },
+    cell: "#1a2232", busbar: "#5c6878", gap: "#e9edf1", frame: "#b9c0c8", frameMm: 30, watts: 400 },
   // BIPV: frameless, the face is a brick-wall texture so it blends into the surrounding architecture.
-  // Size matches the picture (815 x 1130 px, 0.72) so the bricks are not stretched.
+  // Size matches the picture (815 x 1130 px, 0.72) so the bricks are not stretched. A patterned face
+  // gives up output: ~120 W/m2 against ~220 W/m2 for a plain mono module.
   { key: "bipv", name: "BIPV brick", w: 1.1, d: 1.525, cols: 1, rows: 1, halfCut: false,
-    cell: "#8a3f2b", busbar: "#8a3f2b", gap: null, frame: "#6b3a2a", frameMm: 0, texture: "bipv_brick.jpg" },
+    cell: "#8a3f2b", busbar: "#8a3f2b", gap: null, frame: "#6b3a2a", frameMm: 0, texture: "bipv_brick.jpg", watts: 200 },
 ];
 
 export const lookByKey = (key) => PANEL_LOOKS.find((l) => l.key === key) || PANEL_LOOKS[0];

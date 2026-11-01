@@ -48,7 +48,7 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
                 background: var(--bg); color: var(--fg); min-width: 0; }
 
 /* In-AR overlay (WebXR dom-overlay) */
-#overlay { display: none; position: fixed; inset: 0; pointer-events: none; font-family: var(--sans); }
+#overlay { display: none; position: fixed; inset: 0; z-index: 1; pointer-events: none; font-family: var(--sans); }
 #overlay.on { display: block; }
 .hud { position: absolute; left: 12px; right: 12px; top: max(12px, env(safe-area-inset-top));
        background: rgba(12, 18, 26, .8); color: #fff; border-radius: 10px; padding: 10px 12px; pointer-events: auto; }
@@ -60,6 +60,14 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
 .bar button.big { font-size: 1.2rem; padding: 8px 6px; }
 .bar button.primary { background: #1f9d55; }
 .bar button[hidden] { display: none; }
+#shot { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 10px; padding: 16px;
+        background: rgba(10, 14, 20, .92); pointer-events: auto; }
+#shot[hidden] { display: none; }
+#shot img { flex: 1; min-height: 0; object-fit: contain; border-radius: 8px; }
+#shot .row2 { display: flex; gap: 8px; }
+#shot .row2 > * { flex: 1; border: 0; border-radius: 8px; padding: 12px 6px; font: 600 .95rem var(--sans);
+                  text-align: center; text-decoration: none; background: #2d3743; color: #fff; }
+#shot .row2 .primary { background: #1f9d55; }
 #touch { position: absolute; inset: 0; pointer-events: auto; touch-action: none; }
 .seg.looks { grid-template-columns: 1fr 1fr; }
 .swatch { display: inline-block; width: .8em; height: .8em; border-radius: 2px; margin-right: 6px; vertical-align: -1px; border: 2px solid; }
@@ -77,6 +85,7 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
       <li>Press <b>Start AR</b>, move the phone until the ring sits on the surface, then aim between the tags so all of them are in view.</li>
       <li>The scanned roof snaps into the rectangle, scaled to fit, with one solar panel on it. It is pinned to the table: walk around it, it stays put. Move the tags and it follows them.</li>
       <li><b>Long-press the panel</b> and drag to move it; with it picked up, put a <b>second finger</b> down and twist to turn it. <b>Look</b> changes the panel type, <b>−</b> / <b>+</b> / <b>Fit</b> set the scale.</li>
+      <li><b>Photo</b> saves what the phone sees with the panel in it, captioned with the panel type, size and typical power, to share with the client.</li>
     </ol>
     <div class="row">
       <label class="f">Tag ids (2 or 4)<input id="ids" value="0,1" spellcheck="false" autocomplete="off"></label>
@@ -109,8 +118,17 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
     <button id="o-look" hidden>Look</button>
     <button id="o-pturn" hidden>Panel 15°</button>
     <button id="o-turn" hidden>Roof 90°</button>
+    <button id="o-shot" class="primary" hidden>Photo</button>
     <button id="o-relock" hidden>Find tags again</button>
     <button id="o-exit">Exit</button>
+  </div>
+  <div id="shot" hidden>
+    <img id="shot-img" alt="Photo of the panel in AR">
+    <div class="row2">
+      <button id="shot-share" class="primary" hidden>Share</button>
+      <a id="shot-save" class="primary">Save</a>
+      <button id="shot-close">Back</button>
+    </div>
   </div>
 </div>
 
@@ -124,7 +142,8 @@ import { PhoneEmulator, rng } from "./phoneemu.js?v=1";
 import { pixelRay, rayPlane, fitRectangle, fitFromTwo, tagAxis, alignAxes, rectMoved, tagEdge, fitScale, bestTurns,
          scaleLabel, nextNiceScale, isStable, downsample, pickTags, averageTwo, tagsMoved, levelNormal } from "./tagrect.js?v=4";
 import { PANEL_LOOKS, lookByKey, nextLook, cellLayout, panelHit, twistDelta, isLongPress, clampToBox,
-         yawDeg } from "./panel.js?v=1";
+         yawDeg } from "./panel.js?v=2";
+import { composite, caption, shotName } from "./snap.js?v=1";
 
 const DETECT_EVERY_MS = 250, FOLLOW_EVERY_MS = 400, HIT_GRACE_MS = 500, MAX_ANGLE_ERR = 12, EDGE_WARN = 0.15;
 const TILTS = { tilted: 15, flat: 0 }, TOUCH_SLOP_M = 0.012, PANEL_STEP = Math.PI / 12;
@@ -132,7 +151,7 @@ const $ = (id) => document.getElementById(id);
 let design = null, tiltKey = "tilted";
 // the one panel, in roof metres: centre x, z on the roof plane, yaw = rotation.y
 const panel = { x: 0, z: 0, yaw: 0, look: PANEL_LOOKS[0].key };
-let selected = false, grabbed = false;
+let selected = false, grabbed = false, wantShot = false, shotUrl = null, shotFile = null;
 
 // ---------- page ----------
 function chooseLook(key) {
@@ -300,7 +319,7 @@ function panelLine() {
   const l = lookByKey(panel.look);
   const how = grabbed ? "drag to move, second finger to turn" : selected ? "two fingers twist to turn, tap elsewhere to let go"
                                                                          : "long-press the panel to move it";
-  return `<small>panel: ${l.name} ${l.w.toFixed(2)} × ${l.d.toFixed(2)} m, ${TILTS[tiltKey]}° tilt, facing ${yawDeg(panel.yaw)}° · ${how}</small>`;
+  return `<small>panel: ${l.name} ${l.w.toFixed(2)} × ${l.d.toFixed(2)} m, ~${l.watts} W, ${TILTS[tiltKey]}° tilt, facing ${yawDeg(panel.yaw)}° · ${how}</small>`;
 }
 
 function report() {
@@ -313,9 +332,59 @@ function report() {
       ? `<small style="color:#ffb86b">The tags measure off from the printed size: the ring was probably not on the table. Press Find tags again with the ring between the tags.</small>` : "");
 }
 
-const BUTTONS = ["o-minus", "o-fit", "o-plus", "o-look", "o-pturn", "o-turn", "o-relock"];
+const BUTTONS = ["o-minus", "o-fit", "o-plus", "o-look", "o-pturn", "o-turn", "o-shot", "o-relock"];
 function setButtons(locked) {
   BUTTONS.forEach((id) => { $(id).hidden = !locked; });
+}
+
+// ---------- photo: camera image + the panel, rendered again off screen at the camera's size ----------
+function takeShot(frame, view) {
+  wantShot = false;
+  const cam = readCamera(frame, view);
+  if (!cam) { $("hud").innerHTML = "No camera image for the photo<small>needs Chrome 107+ on Android with ARCore</small>"; return null; }
+  const { w, h } = cam, camPx = pixels.slice();
+  const shotCam = new THREE.PerspectiveCamera();
+  shotCam.projectionMatrix.fromArray(view.projectionMatrix);
+  shotCam.projectionMatrixInverse.copy(shotCam.projectionMatrix).invert();
+  shotCam.matrixAutoUpdate = false;
+  shotCam.matrixWorld.fromArray(view.transform.matrix);
+  shotCam.matrixWorldInverse.copy(shotCam.matrixWorld).invert();
+  const rt = new THREE.WebGLRenderTarget(w, h);
+  rt.texture.colorSpace = THREE.SRGBColorSpace;
+  const xr = renderer.xr.enabled, bg = scene.background, rv = reticle.visible, sv = panelObj && panelObj.userData.sel.visible;
+  const prevTarget = renderer.getRenderTarget(), prevColor = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha();
+  renderer.xr.enabled = false; scene.background = null; reticle.visible = false;
+  if (panelObj) panelObj.userData.sel.visible = false;
+  renderer.setRenderTarget(rt); renderer.setClearColor(0x000000, 0); renderer.clear();
+  renderer.render(scene, shotCam);
+  const scenePx = new Uint8Array(w * h * 4);
+  renderer.readRenderTargetPixels(rt, 0, 0, w, h, scenePx);
+  renderer.setRenderTarget(prevTarget); renderer.setClearColor(prevColor, prevAlpha);
+  renderer.xr.enabled = xr; scene.background = bg; reticle.visible = rv;
+  if (panelObj) panelObj.userData.sel.visible = sv;
+  rt.dispose();
+  return showShot(composite(camPx, scenePx, w, h, flipY), w, h);
+}
+
+function showShot(rgba, w, h) {
+  const c = document.createElement("canvas"), g = c.getContext("2d");
+  c.width = w; c.height = h;
+  g.putImageData(new ImageData(rgba, w, h), 0, 0);
+  const text = caption(lookByKey(panel.look), TILTS[tiltKey]), fs = Math.max(12, Math.round(w / 34)), band = fs * 2.2;
+  g.fillStyle = "rgba(0,0,0,.6)"; g.fillRect(0, h - band, w, band);
+  g.fillStyle = "#fff"; g.font = `600 ${fs}px sans-serif`; g.textBaseline = "middle";
+  g.fillText(text, fs * 0.8, h - band / 2, w - fs * 1.6);
+  const name = shotName(new Date()), png = c.toDataURL("image/png");
+  c.toBlob((blob) => {
+    if (shotUrl) URL.revokeObjectURL(shotUrl);
+    shotUrl = URL.createObjectURL(blob);
+    shotFile = new File([blob], name, { type: "image/png" });
+    $("shot-img").src = shotUrl;
+    $("shot-save").href = shotUrl; $("shot-save").download = name;
+    $("shot-share").hidden = !(navigator.canShare && navigator.canShare({ files: [shotFile] }));
+    $("shot").hidden = false;
+  }, "image/png");
+  return { w, h, text, name, png };
 }
 
 // ---------- tag detection on the AR camera frame ----------
@@ -477,6 +546,7 @@ $("start").onclick = async () => {
       const view = pose && pose.views[0];
       if (view) { lastProj = Array.from(view.projectionMatrix); lastPose = Array.from(view.transform.matrix); }
       if (view) detectStep(frame, view);
+      if (view && wantShot) takeShot(frame, view);
       if (rect && anchor && frame.trackedAnchors && frame.trackedAnchors.has(anchor)) {
         const ap = frame.getPose(anchor.anchorSpace, refSpace);
         if (ap) group.matrix.fromArray(ap.transform.matrix);
@@ -486,7 +556,7 @@ $("start").onclick = async () => {
   });
 };
 
-$("overlay").addEventListener("beforexrselect", (e) => { if (e.target.closest("button, input, label")) e.preventDefault(); });
+$("overlay").addEventListener("beforexrselect", (e) => { if (e.target.closest("button, input, label, a, #shot")) e.preventDefault(); });
 $("o-minus").onclick = () => { scale = nextNiceScale(scale, -1); place(); };
 $("o-plus").onclick = () => { scale = nextNiceScale(scale, +1); place(); };
 $("o-fit").onclick = () => { scale = fitS; place(); };
@@ -496,6 +566,9 @@ $("o-turn").onclick = () => {
   place();
 };
 $("o-relock").onclick = relock;
+$("o-shot").onclick = () => { wantShot = true; };
+$("shot-close").onclick = () => { $("shot").hidden = true; };
+$("shot-share").onclick = () => navigator.share({ files: [shotFile], title: "Solar panel preview" }).catch(() => {});
 $("o-look").onclick = () => chooseLook(nextLook(panel.look, 1));
 $("o-pturn").onclick = () => { panel.yaw -= PANEL_STEP; updatePanel(); };
 
@@ -641,6 +714,8 @@ window.__tagar = {
     return { log, rect: rect && { center: rect.center, width: rect.width, height: rect.height, u: rect.u, tags: rect.tags },
              ...this.state() };
   },
+  // Photo through the same path as the phone's Photo button, from the last emulated view.
+  emuShot() { return takeShot({}, emu.view(emuR, 0)); },
   // The last emulated camera image (upright, as a PNG data URL) and the tag ids the detector reads in it.
   emuFrame() {
     const img = downsample(pixels, emu.w, emu.h, true), c = document.createElement("canvas");
