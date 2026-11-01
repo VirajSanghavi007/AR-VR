@@ -105,3 +105,11 @@ export function heightMap(rgba, w, h, blur = 1, rim = 0) {
 
 // Border width in image pixels for a face `faceM` metres wide drawn `px` pixels wide.
 export const borderPx = (borderMm, faceM, px) => Math.round((borderMm / 1000 / faceM) * px);
+
+// Where a w x d panel's centre may go so it stays inside the tag rectangle (rectW along the long
+// side, rectH across, real metres) shown at `scale` after `turns` quarter turns. Panel metres, centred.
+export function moveBox(rectW, rectH, turns, scale, w, d) {
+  const [rx, rz] = turns % 2 ? [rectH, rectW] : [rectW, rectH];
+  const hx = Math.max(0, (rx / scale - w) / 2), hz = Math.max(0, (rz / scale - d) / 2);
+  return { minX: -hx, maxX: hx, minZ: -hz, maxZ: hz };
+}

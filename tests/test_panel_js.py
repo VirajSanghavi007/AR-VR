@@ -179,3 +179,23 @@ def test_page_draws_only_the_panel_not_the_roof_slab():
     html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
     assert "0x9aa3ad" not in html and "ShapeGeometry" not in html
     assert "design.keepouts.forEach" not in html
+
+
+def test_move_box_keeps_the_panel_inside_the_tag_rectangle(node_available):
+    # 0.8 x 0.5 m tags at 1:2 are 1.6 x 1.0 m of panel space; a 1 x 0.6 m panel can move 0.3 / 0.2 either way
+    b = run("P.moveBox(0.8, 0.5, 0, 0.5, 1, 0.6)")
+    assert b == pytest.approx({"minX": -0.3, "maxX": 0.3, "minZ": -0.2, "maxZ": 0.2})
+    # an odd turn swaps which rectangle side runs along the panel's x
+    b = run("P.moveBox(0.8, 0.5, 1, 0.5, 0.6, 1)")
+    assert b == pytest.approx({"minX": -0.2, "maxX": 0.2, "minZ": -0.3, "maxZ": 0.3})
+    assert run("P.moveBox(0.8, 0.5, 2, 0.5, 1, 0.6)") == pytest.approx(run("P.moveBox(0.8, 0.5, 0, 0.5, 1, 0.6)"))
+    # panel bigger than the rectangle: pinned to the centre, never an inverted box
+    assert run("P.moveBox(0.8, 0.5, 0, 1, 1, 0.6)") == pytest.approx({"minX": 0, "maxX": 0, "minZ": 0, "maxZ": 0})
+
+
+def test_page_fits_the_panel_not_the_roof():
+    html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
+    assert "terrace_anchor.json" not in html and "m roof" not in html
+    for hook in ("setDesign()", "w: l.w, d: l.d", "moveBox(rect.width, rect.height, turns, scale, design.w, design.d)",
+                 "clampToBox([panel.x, panel.z], inRect())", "panel shown", "./panel.js?v=4"):
+        assert hook in html, hook

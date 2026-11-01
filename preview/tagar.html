@@ -83,7 +83,7 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
     <ol>
       <li>Print AprilTags (36h11, from <code>scripts/make_tags.py</code>). <b>2 tags</b> (ids 0 and 1, or any 2 if only 2 are in view): lay them at <b>opposite corners</b> of a rectangle, each tag any way up. <b>4 tags</b> (ids 0-3): one at each corner.</li>
       <li>Press <b>Start AR</b>, move the phone until the ring sits on the surface, then aim between the tags so all of them are in view.</li>
-      <li>The scanned roof snaps into the rectangle, scaled to fit, with one solar panel on it. It is pinned to the table: walk around it, it stays put. Move the tags and it follows them.</li>
+      <li>One solar panel snaps into the rectangle, scaled to fill it (− and + pick a round 1:N scale). It is pinned to the table: walk around it, it stays put. Move the tags and it follows them.</li>
       <li><b>Long-press the panel</b> and drag to move it; with it picked up, put a <b>second finger</b> down and twist to turn it. <b>Look</b> changes the panel type, <b>−</b> / <b>+</b> / <b>Fit</b> set the scale.</li>
       <li><b>Photo</b> saves what the phone sees with the panel in it, captioned with the panel type, size and typical power, to share with the client.</li>
     </ol>
@@ -117,7 +117,7 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
     <button id="o-plus" class="big" hidden aria-label="Bigger model">+</button>
     <button id="o-look" hidden>Look</button>
     <button id="o-pturn" hidden>Panel 15°</button>
-    <button id="o-turn" hidden>Roof 90°</button>
+    <button id="o-turn" hidden>Turn 90°</button>
     <button id="o-shot" class="primary" hidden>Photo</button>
     <button id="o-relock" hidden>Find tags again</button>
     <button id="o-exit">Exit</button>
@@ -140,9 +140,9 @@ import * as THREE from "three";
 import { parseIds } from "./tagcheck.js?v=1";
 import { PhoneEmulator, rng } from "./phoneemu.js?v=1";
 import { pixelRay, rayPlane, fitRectangle, fitFromTwo, tagAxis, alignAxes, rectMoved, tagEdge, fitScale, bestTurns,
-         scaleLabel, nextNiceScale, isStable, downsample, pickTags, averageTwo, tagsMoved, levelNormal } from "./tagrect.js?v=4";
+         scaleLabel, nextNiceScale, isStable, downsample, pickTags, averageTwo, tagsMoved, levelNormal } from "./tagrect.js?v=5";
 import { PANEL_LOOKS, lookByKey, nextLook, cellLayout, panelHit, twistDelta, isLongPress, clampToBox,
-         yawDeg, heightMap, borderPx } from "./panel.js?v=3";
+         yawDeg, heightMap, borderPx, moveBox } from "./panel.js?v=4";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { composite, caption, shotName } from "./snap.js?v=1";
 
@@ -157,6 +157,12 @@ let selected = false, grabbed = false, wantShot = false, shotUrl = null, shotFil
 // ---------- page ----------
 function chooseLook(key) {
   panel.look = key;
+  setDesign();
+  if (rect) {                                                  // a new size: refit an auto scale, keep a hand-set one
+    const auto = Math.abs(scale - fitS) < 1e-9;
+    fitS = fitScale(design.w, design.d, rect.width, rect.height, turns);
+    if (auto) scale = fitS;
+  }
   for (const l of PANEL_LOOKS) $("l-" + l.key).setAttribute("aria-pressed", String(l.key === key));
   if (rect) place();
 }
@@ -176,15 +182,10 @@ function chooseTilt(key) {
 $("b-tilted").onclick = () => chooseTilt("tilted");
 $("b-flat").onclick = () => chooseTilt("flat");
 
-// Design footprint from the scanned roof outline (glTF y-up, metres).
-fetch("terrace_anchor.json").then((r) => r.json()).then((d) => {
-  const ring = d.outline[0], xs = ring.map((p) => p[0]), zs = ring.map((p) => p[2]);
-  design = { ring, keepouts: d.keepouts, y: ring.reduce((s, p) => s + p[1], 0) / ring.length,
-             cx: (Math.max(...xs) + Math.min(...xs)) / 2, cz: (Math.max(...zs) + Math.min(...zs)) / 2,
-             w: Math.max(...xs) - Math.min(...xs), d: Math.max(...zs) - Math.min(...zs),
-             box: { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs) } };
-  panel.x = design.cx; panel.z = design.cz;
-});
+// What auto fit sizes into the tag rectangle: the chosen panel's footprint (metres), centred.
+const setDesign = () => { const l = lookByKey(panel.look); design = { y: 0, cx: 0, cz: 0, w: l.w, d: l.d }; };
+setDesign();
+const inRect = () => moveBox(rect.width, rect.height, turns, scale, design.w, design.d);
 
 (async () => {
   const ok = navigator.xr && await navigator.xr.isSessionSupported("immersive-ar").catch(() => false);
@@ -320,6 +321,7 @@ function place() {
   group.clear();
   if (!design || !rect) return;
   inner = new THREE.Group();
+  [panel.x, panel.z] = clampToBox([panel.x, panel.z], inRect());
   // only the panel is drawn: the scanned roof outline (grey slab, red ring, orange keep-outs) stays out of the view
   panelObj = buildPanel(lookByKey(panel.look));
   inner.add(panelObj);
@@ -350,7 +352,7 @@ function report() {
   const fit = Math.abs(scale - fitS) < 1e-9 ? " (auto fit)" : "";
   const edge = lastEdge ? ` · tag edge ${(lastEdge * 1000).toFixed(0)} mm (printed ${(tagSize * 1000).toFixed(0)})` : "";
   $("hud").innerHTML = `Scale ${scaleLabel(scale)}${fit}` +
-    panelLine() + `<small>tags ${(rect.width * 100).toFixed(1)} × ${(rect.height * 100).toFixed(1)} cm · model ${cm(design.w)} × ${cm(design.d)} cm of a ${design.w.toFixed(1)} × ${design.d.toFixed(1)} m roof${edge}</small>` +
+    panelLine() + `<small>tags ${(rect.width * 100).toFixed(1)} × ${(rect.height * 100).toFixed(1)} cm · panel shown ${cm(design.w)} × ${cm(design.d)} cm${edge}</small>` +
     (Math.abs(lastEdge - tagSize) / tagSize > EDGE_WARN
       ? `<small style="color:#ffb86b">The tags measure off from the printed size: the ring was probably not on the table. Press Find tags again with the ring between the tags.</small>` : "");
 }
@@ -643,7 +645,7 @@ $("touch").addEventListener("pointermove", (e) => {
     const now = [...touches.values()].map((q) => q.roof);
     if (prev.every(Boolean) && now.every(Boolean)) { panel.yaw += twistDelta(prev[0], prev[1], now[0], now[1]); updatePanel(); }
   } else if (touches.size === 1 && grabbed && t.roof) {
-    [panel.x, panel.z] = clampToBox([t.roof[0] + grabOffset[0], t.roof[1] + grabOffset[1]], design.box);
+    [panel.x, panel.z] = clampToBox([t.roof[0] + grabOffset[0], t.roof[1] + grabOffset[1]], inRect());
     updatePanel();
   }
 });
