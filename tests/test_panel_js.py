@@ -27,10 +27,11 @@ def run(expr):
 
 def test_looks_are_real_module_sizes(node_available):
     looks = run("P.PANEL_LOOKS")
-    assert len(looks) == 4 and len({l["key"] for l in looks}) == 4
+    assert [l["key"] for l in looks] == ["standard", "bipv"]
     for l in looks:
-        assert 0.9 < l["w"] < 1.2 and 1.6 < l["d"] < 2.4 and l["d"] > l["w"]    # portrait, metres
-    assert run('P.lookByKey("poly-blue").name') == "Poly blue"
+        assert 0.9 < l["w"] < 1.2 and 1.4 < l["d"] < 2.4 and l["d"] > l["w"]    # portrait, metres
+    assert run('P.lookByKey("bipv").name') == "BIPV brick"
+    assert [l["key"] for l in looks if l.get("texture")] == ["bipv"]
     assert run('P.lookByKey("nope").key') == looks[0]["key"]
 
 
@@ -42,7 +43,7 @@ def test_next_look_wraps_both_ways(node_available):
     assert run('P.nextLook("nope", 1)') == keys[1]
 
 
-@pytest.mark.parametrize("key", ["mono-black", "mono-silver", "poly-blue", "bifacial"])
+@pytest.mark.parametrize("key", ["standard"])
 def test_cell_layout_fills_inside_the_frame(key, node_available):
     look = run(f'P.lookByKey("{key}")')
     cells = run(f'P.cellLayout(P.lookByKey("{key}"))')
@@ -59,6 +60,15 @@ def test_cell_layout_fills_inside_the_frame(key, node_available):
     assert np.allclose(steps[: look["rows"] // 2 - 1], gap_y)
     assert steps[look["rows"] // 2 - 1] == pytest.approx(gap_y + mid)        # the half-cut split
     assert np.allclose(np.diff(sorted({round(c["x"], 9) for c in cells})) - cells[0]["w"], 0.002 / look["w"])
+
+
+def test_bipv_is_one_frameless_textured_face_in_the_pictures_proportions(node_available):
+    from PIL import Image
+    look = run('P.lookByKey("bipv")')
+    img = Image.open(PREVIEW / look["texture"])
+    assert look["frameMm"] == 0 and (look["cols"], look["rows"]) == (1, 1)
+    assert look["w"] / look["d"] == pytest.approx(img.width / img.height, abs=0.005)      # bricks not stretched
+    assert run('P.cellLayout(P.lookByKey("bipv"))') == [{"x": 0, "y": 0, "w": 1, "h": 1}]
 
 
 def test_to_panel_frame_and_hit(node_available):
@@ -110,5 +120,5 @@ def test_clamp_and_yaw_deg(node_available):
 def test_page_uses_one_panel_not_the_grid():
     html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
     assert "GLTFLoader" not in html and "terrace_tilted_ar.glb" not in html
-    for hook in ("buildPanel", "panelTexture", "cellLayout", "isLongPress", "twistDelta", 'id="o-look"', 'id="looks"'):
+    for hook in ("TextureLoader", "look.texture", "buildPanel", "panelTexture", "cellLayout", "isLongPress", "twistDelta", 'id="o-look"', 'id="looks"'):
         assert hook in html, hook

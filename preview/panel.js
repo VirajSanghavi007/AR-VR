@@ -3,14 +3,13 @@
 
 // Real module sizes (metres): w across the short side, d along the long side (portrait).
 export const PANEL_LOOKS = [
-  { key: "mono-black", name: "Mono all-black", w: 1.134, d: 1.722, cols: 6, rows: 18, halfCut: true,
-    cell: "#10141b", busbar: "#262c36", gap: "#0b0d11", frame: "#15171b", frameMm: 30 },
-  { key: "mono-silver", name: "Mono silver frame", w: 1.038, d: 1.755, cols: 6, rows: 20, halfCut: true,
+  // Standard module: dark mono cells, silver frame.
+  { key: "standard", name: "Standard", w: 1.038, d: 1.755, cols: 6, rows: 20, halfCut: true,
     cell: "#1a2232", busbar: "#5c6878", gap: "#e9edf1", frame: "#b9c0c8", frameMm: 30 },
-  { key: "poly-blue", name: "Poly blue", w: 0.992, d: 1.65, cols: 6, rows: 10, halfCut: false,
-    cell: "#2f5597", busbar: "#c9d2dc", gap: "#f2f4f6", frame: "#b9c0c8", frameMm: 35 },
-  { key: "bifacial", name: "Bifacial glass", w: 1.134, d: 2.278, cols: 6, rows: 24, halfCut: true,
-    cell: "#121a26", busbar: "#3a4656", gap: null, frame: "#2a2f36", frameMm: 8 },
+  // BIPV: frameless, the face is a brick-wall texture so it blends into the surrounding architecture.
+  // Size matches the picture (815 x 1130 px, 0.72) so the bricks are not stretched.
+  { key: "bipv", name: "BIPV brick", w: 1.1, d: 1.525, cols: 1, rows: 1, halfCut: false,
+    cell: "#8a3f2b", busbar: "#8a3f2b", gap: null, frame: "#6b3a2a", frameMm: 0, texture: "bipv_brick.jpg" },
 ];
 
 export const lookByKey = (key) => PANEL_LOOKS.find((l) => l.key === key) || PANEL_LOOKS[0];

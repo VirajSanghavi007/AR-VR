@@ -143,7 +143,8 @@ function chooseLook(key) {
 for (const l of PANEL_LOOKS) {
   const b = document.createElement("button");
   b.id = "l-" + l.key;
-  b.innerHTML = `<span class="swatch" style="background:${l.cell};border-color:${l.frame}"></span>${l.name}`;
+  const bg = l.texture ? `url(${l.texture}) center/cover` : l.cell;
+  b.innerHTML = `<span class="swatch" style="background:${bg};border-color:${l.frame}"></span>${l.name}`;
   b.onclick = () => chooseLook(l.key);
   $("looks").appendChild(b);
 }
@@ -213,6 +214,12 @@ const ringLine = (ring, y, color) => new THREE.LineLoop(
 const textures = new Map();
 function panelTexture(look) {
   if (textures.has(look.key)) return textures.get(look.key);
+  if (look.texture) {                                          // BIPV: a picture of the wall material
+    const t = new THREE.TextureLoader().load(look.texture);
+    t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+    textures.set(look.key, t);
+    return t;
+  }
   const W = 256, H = Math.round((W * look.d) / look.w), c = document.createElement("canvas");
   c.width = W; c.height = H;
   const g = c.getContext("2d");
@@ -235,7 +242,7 @@ function panelTexture(look) {
 function buildPanel(look) {
   const obj = new THREE.Group(), tilt = new THREE.Group();
   const face = new THREE.MeshStandardMaterial({ map: panelTexture(look), roughness: 0.3, metalness: 0.15,
-                                                transparent: !look.gap, side: THREE.DoubleSide });
+                                                transparent: !look.gap && !look.texture, side: THREE.DoubleSide });
   const edge = new THREE.MeshStandardMaterial({ color: look.frame, roughness: 0.5, metalness: 0.6 });
   const T = 0.035, mesh = new THREE.Mesh(new THREE.BoxGeometry(look.w, T, look.d),
                                          [edge, edge, face, look.gap ? edge : face, edge, edge]);
