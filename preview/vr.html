@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rooftop Solar 3D</title>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<style>
+:root { --bg:#0e141b; --fg:#f2f5f8; --accent:#2f6bff; --sans: system-ui, -apple-system, "Segoe UI", sans-serif; }
+html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font-family:var(--sans); overflow:hidden; }
+canvas { display:block; touch-action:none; }
+#bar { position:fixed; left:0; right:0; bottom:0; display:flex; gap:8px; padding:10px 16px calc(10px + env(safe-area-inset-bottom)); background:rgba(14,20,27,.82); }
+#bar.hide { display:none; }
+button { flex:1; padding:12px 6px; border:0; border-radius:8px; background:var(--accent); color:#fff; font:600 14px var(--sans); }
+button.alt { background:#2a3542; }
+#info { position:fixed; top:10px; left:16px; right:16px; font-size:13px; opacity:.9; pointer-events:none; text-shadow:0 1px 2px #000; }
+#msg { position:fixed; top:40px; left:16px; right:16px; font-size:13px; color:#ffd27a; pointer-events:none; }
+</style>
+</head>
+<body>
+<div id="info">Loading roof model...</div>
+<div id="msg"></div>
+<div id="bar">
+  <button id="bOrbit" class="alt">Orbit</button>
+  <button id="bVR">VR (Cardboard)</button>
+  <button id="bAR" class="alt">AR on table</button>
+</div>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { StereoEffect } from "three/addons/effects/StereoEffect.js";
+import { Sky } from "three/addons/objects/Sky.js";
+
+const $ = (id) => document.getElementById(id);
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.55;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const SUN_DIR = new THREE.Vector3(-0.35, 0.62, -0.7).normalize();   // sun on the panels side (-z)
+const sky = new Sky();
+sky.scale.setScalar(4000);
+Object.assign(sky.material.uniforms, {
+  turbidity: { value: 3.5 }, rayleigh: { value: 1.4 },
+  mieCoefficient: { value: 0.004 }, mieDirectionalG: { value: 0.82 },
+});
+sky.material.uniforms.sunPosition.value.copy(SUN_DIR);
+scene.add(sky);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(scene, 0, 0.1, 10000).texture;      // sky only so far: real-looking reflections
+scene.fog = new THREE.Fog(0xc4d6e6, 90, 420);
+
+const sun = new THREE.DirectionalLight(0xfff0d8, 3.2);
+sun.position.copy(SUN_DIR).multiplyScalar(70).add(new THREE.Vector3(6, 0, -4));
+sun.target.position.set(6, 0, -4);
+sun.castShadow = true;
+sun.shadow.mapSize.set(4096, 4096);
+Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 32, bottom: -32, near: 10, far: 160 });
+sun.shadow.bias = -0.0002; sun.shadow.normalBias = 0.04;
+scene.add(sun, sun.target, new THREE.HemisphereLight(0xe8eef4, 0x6b7a5a, 0.35));
+
+// ---- procedural surface textures (no downloads) ----
+function paint(size, draw, repeat, srgb = true) {
+  const c = document.createElement("canvas"); c.width = c.height = size;
+  const g = c.getContext("2d"); draw(g, size);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat, repeat);
+  t.anisotropy = 8; if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const rnd = (a, b) => a + Math.random() * (b - a);
+function speckle(base, tones, n, big) {
+  return (g, S) => {
+    g.fillStyle = base; g.fillRect(0, 0, S, S);
+    for (let i = 0; i < big; i++) {                       // soft blotches
+      g.fillStyle = tones[i % tones.length] + "18"; const r = rnd(20, 90);
+      g.beginPath(); g.arc(rnd(0, S), rnd(0, S), r, 0, 7); g.fill();
+    }
+    for (let i = 0; i < n; i++) {                         // fine grain
+      g.fillStyle = tones[i % tones.length] + "55"; const r = rnd(0.5, 2);
+      g.fillRect(rnd(0, S), rnd(0, S), r, r);
+    }
+  };
+}
+const concreteTex = paint(512, speckle("#a9a69f", ["#7d7b76", "#c9c6bf", "#8f8c86"], 14000, 60), 1);
+const stuccoTex = paint(512, speckle("#d9ccb4", ["#bfb095", "#ece3d0", "#c9bb9f"], 9000, 40), 1);
+const grassTex = paint(512, (g, S) => {
+  g.fillStyle = "#587a37"; g.fillRect(0, 0, S, S);
+  const tones = ["#3f6428", "#6f9440", "#4d7330", "#7a9a4a", "#8a8f4a"];
+  for (let i = 0; i < 9000; i++) {
+    g.strokeStyle = tones[i % 5]; g.lineWidth = rnd(0.6, 1.6);
+    const x = rnd(0, S), y = rnd(0, S);
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + rnd(-3, 3), y - rnd(3, 9)); g.stroke();
+  }
+}, 120);
+const pavingTex = paint(512, (g, S) => {
+  speckle("#9b9a96", ["#777777", "#b5b3ad", "#8a8985"], 9000, 30)(g, S);
+  g.strokeStyle = "#5e5d5a"; g.lineWidth = 3;
+  for (let i = 0; i <= 4; i++) {
+    g.beginPath(); g.moveTo(i * S / 4, 0); g.lineTo(i * S / 4, S); g.stroke();
+    g.beginPath(); g.moveTo(0, i * S / 4); g.lineTo(S, i * S / 4); g.stroke();
+  }
+}, 7);
+
+const M = {
+  roof: new THREE.MeshStandardMaterial({ map: concreteTex, bumpMap: concreteTex, bumpScale: 1.5, roughness: 0.95, vertexColors: true }),
+  stucco: new THREE.MeshStandardMaterial({ map: stuccoTex, bumpMap: stuccoTex, bumpScale: 1, roughness: 0.92 }),
+  grass: new THREE.MeshStandardMaterial({ map: grassTex, bumpMap: grassTex, bumpScale: 1.2, roughness: 1 }),
+  paving: new THREE.MeshStandardMaterial({ map: pavingTex, bumpMap: pavingTex, bumpScale: 1.2, roughness: 0.9 }),
+  window: new THREE.MeshPhysicalMaterial({ color: 0x1d2c3b, roughness: 0.05, metalness: 0.2, clearcoat: 1 }),
+  bark: new THREE.MeshStandardMaterial({ color: 0x5a4632, roughness: 1 }),
+};
+const leaf = (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.9 });
+
+// ---- surroundings: building body, paving, ground, trees, neighbours ----
+const surround = new THREE.Group();
+scene.add(surround);
+const GROUND_Y = -9;                                      // roof is 9 m above the ground
+function add(mesh, x, y, z) { mesh.position.set(x, y, z); mesh.castShadow = mesh.receiveShadow = true; surround.add(mesh); return mesh; }
+add(new THREE.Mesh(new THREE.BoxGeometry(11.6, 9, 7.6), M.stucco), 6, -4.5 - 0.001, -4);
+for (let f = 0; f < 3; f++) {                              // windows on the four faces, three floors
+  const y = -7.4 + f * 3 + 0.2;
+  for (let k = 0; k < 4; k++) {
+    const x = 6 + (k - 1.5) * 2.6;
+    add(new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.5, 0.06), M.window), x, y, -4 + 3.8);
+    add(new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.5, 0.06), M.window), x, y, -4 - 3.8);
+  }
+  for (let k = 0; k < 3; k++) {
+    const z = -4 + (k - 1) * 2.3;
+    add(new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.5, 1.3), M.window), 6 + 5.8, y, z);
+    add(new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.5, 1.3), M.window), 6 - 5.8, y, z);
+  }
+}
+const ground = add(new THREE.Mesh(new THREE.PlaneGeometry(900, 900), M.grass), 6, GROUND_Y, -4);
+ground.rotation.x = -Math.PI / 2; ground.castShadow = false;
+const apron = add(new THREE.Mesh(new THREE.PlaneGeometry(22, 18), M.paving), 6, GROUND_Y + 0.02, -4);
+apron.rotation.x = -Math.PI / 2; apron.castShadow = false;
+function tree(x, z, h) {
+  const t = new THREE.Group();
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.15 * h / 6, 0.25 * h / 6, h * 0.45, 8), M.bark);
+  trunk.position.y = h * 0.22; t.add(trunk);
+  for (let i = 0; i < 4; i++) {
+    const c = new THREE.Mesh(new THREE.IcosahedronGeometry(h * rnd(0.22, 0.32), 2), leaf([0x3d6a2b, 0x4a7a32, 0x35602a][i % 3]));
+    c.position.set(rnd(-1, 1) * h * 0.18, h * (0.55 + 0.12 * i), rnd(-1, 1) * h * 0.18);
+    t.add(c);
+  }
+  t.traverse((o) => { o.castShadow = o.receiveShadow = true; });
+  t.position.set(x, GROUND_Y, z); surround.add(t);
+}
+[[-4, 4, 7], [-6, -10, 8], [17, 5, 6.5], [19, -9, 8], [3, 10, 7], [12, -16, 9], [-12, -2, 6], [24, -2, 7.5]]
+  .forEach(([x, z, h]) => tree(x, z, h));
+[[-22, -4, 10, 8, 14], [34, -6, 12, 10, 9], [6, -34, 16, 9, 12], [6, 30, 14, 9, 7]]
+  .forEach(([x, z, w, d, h]) => add(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), M.stucco), x, GROUND_Y + h / 2, z));
+
+const world = new THREE.Group();           // the roof model
+scene.add(world);
+const CENTRE = new THREE.Vector3(6, 0.15, -4);
+const ORBIT_POS = new THREE.Vector3(-6, 9, 7);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 8000);
+camera.position.copy(ORBIT_POS);
+const orbit = new OrbitControls(camera, renderer.domElement);
+orbit.target.copy(CENTRE);
+orbit.enableDamping = true;
+orbit.maxPolarAngle = Math.PI * 0.495;
+
+// Roof primitive has no UVs: project by dominant normal, colour slab (membrane) vs walls (cream paint).
+function dress(geo) {
+  const g = geo.toNonIndexed(); g.computeVertexNormals();
+  const p = g.attributes.position, n = g.attributes.normal;
+  const uv = new Float32Array(p.count * 2), col = new Float32Array(p.count * 3);
+  for (let i = 0; i < p.count; i++) {
+    const ax = Math.abs(n.getX(i)), ay = Math.abs(n.getY(i));
+    const [u, v] = ay > 0.7 ? [p.getX(i), p.getZ(i)] : ax > 0.7 ? [p.getZ(i), p.getY(i)] : [p.getX(i), p.getY(i)];
+    uv[2 * i] = u / 2; uv[2 * i + 1] = v / 2;
+    col.set(ay > 0.7 && p.getY(i) < 0.2 ? [0.62, 0.62, 0.6] : [1, 0.96, 0.88], 3 * i);
+  }
+  g.setAttribute("uv", new THREE.BufferAttribute(uv, 2));
+  g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  return g;
+}
+new GLTFLoader().load("models/rooftop_solar.glb", (gltf) => {
+  let panels = 0;
+  gltf.scene.traverse((o) => { o.castShadow = o.receiveShadow = true; });
+  world.add(gltf.scene);
+  gltf.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    const m = o.material;
+    if (m.map) {                                          // panel glass: glossy, cell texture kept
+      panels += o.geometry.attributes.position.count / 4;
+      o.material = new THREE.MeshPhysicalMaterial({ flatShading: true, map: m.map, roughness: 0.32, metalness: 0.1, clearcoat: 0.35, clearcoatRoughness: 0.08, envMapIntensity: 0.5 });
+    } else if (m.metalness > 0.5) {
+      o.material = new THREE.MeshStandardMaterial({ flatShading: true, color: 0xb8bdc4, metalness: 0.9, roughness: 0.38 });
+    } else {
+      o.geometry = dress(o.geometry); o.material = M.roof;
+    }
+  });
+  $("info").textContent = `Rooftop 12 x 8 m, ${panels} solar panels. Drag to orbit, pinch to zoom.`;
+}, undefined, () => { $("info").textContent = "Could not load models/rooftop_solar.glb"; });
+
+let mode = "orbit";
+const stereo = new StereoEffect(renderer);
+stereo.setSize(innerWidth, innerHeight);
+const gyroQ = new THREE.Quaternion();
+const hasGyro = { on: false };
+const Q_UP = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+
+function onOrient(e) {
+  if (e.alpha == null) return;
+  hasGyro.on = true;
+  const rad = THREE.MathUtils.degToRad;
+  gyroQ.setFromEuler(new THREE.Euler(rad(e.beta), rad(e.alpha), -rad(e.gamma), "YXZ"));
+  gyroQ.multiply(Q_UP);
+  const s = (screen.orientation && screen.orientation.angle) || 0;
+  gyroQ.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -rad(s)));
+}
+
+async function startVR() {
+  if (window.DeviceOrientationEvent && DeviceOrientationEvent.requestPermission) {
+    const r = await DeviceOrientationEvent.requestPermission().catch(() => "denied");
+    if (r !== "granted") { $("msg").textContent = "Motion access denied."; return; }
+  }
+  addEventListener("deviceorientation", onOrient);
+  mode = "vr";
+  orbit.enabled = false;
+  camera.position.set(2, 0.15 + 1.6, -4);          // standing on the roof
+  $("bar").classList.add("hide");
+  $("info").textContent = "";
+  $("msg").textContent = "";
+  try { await document.documentElement.requestFullscreen(); await screen.orientation.lock("landscape"); } catch (e) {}
+  stereo.setSize(innerWidth, innerHeight);
+}
+function stopVR() {
+  mode = "orbit";
+  removeEventListener("deviceorientation", onOrient);
+  orbit.enabled = true;
+  camera.position.copy(ORBIT_POS);
+  orbit.target.copy(CENTRE);
+  orbit.update();
+  $("bar").classList.remove("hide");
+  if (document.fullscreenElement) document.exitFullscreen();
+}
+// VR: tap to walk 2 m where you look; two-finger tap leaves.
+renderer.domElement.addEventListener("pointerdown", () => {
+  if (mode !== "vr") return;
+  const f = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion); f.y = 0;
+  if (f.lengthSq() > 1e-6) camera.position.addScaledVector(f.normalize(), 2);
+});
+renderer.domElement.addEventListener("touchstart", (e) => { if (mode === "vr" && e.touches.length > 1) stopVR(); });
+
+$("bOrbit").onclick = () => { if (mode === "vr") stopVR(); camera.position.copy(ORBIT_POS); orbit.target.copy(CENTRE); };
+$("bVR").onclick = startVR;
+
+// AR: a miniature of the roof on a real surface (WebXR immersive-ar with hit-test).
+$("bAR").onclick = async () => {
+  if (!navigator.xr || !(await navigator.xr.isSessionSupported("immersive-ar").catch(() => false))) {
+    $("msg").textContent = "AR needs Chrome on an ARCore Android phone.";
+    return;
+  }
+  const session = await navigator.xr.requestSession("immersive-ar",
+    { requiredFeatures: ["hit-test"], optionalFeatures: ["dom-overlay"], domOverlay: { root: document.body } });
+  renderer.xr.enabled = true;
+  await renderer.xr.setSession(session);
+  scene.background = null; scene.fog = null; sky.visible = false; surround.visible = false;
+  const SCALE = 0.04;                                  // 12 m roof -> 48 cm model
+  world.scale.setScalar(SCALE);
+  world.position.set(0, -10, 0);
+  const reticle = new THREE.Mesh(new THREE.RingGeometry(0.06, 0.08, 32).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0x2f6bff }));
+  reticle.matrixAutoUpdate = false; reticle.visible = false; scene.add(reticle);
+  const space = await session.requestReferenceSpace("viewer");
+  const src = await session.requestHitTestSource({ space });
+  let placed = false;
+  session.addEventListener("select", () => {
+    if (!reticle.visible || placed) return;
+    placed = true;
+    const p = new THREE.Vector3();
+    reticle.matrix.decompose(p, new THREE.Quaternion(), new THREE.Vector3());
+    world.position.copy(p).sub(new THREE.Vector3(6, 0, -4).multiplyScalar(SCALE));
+    reticle.visible = false;
+    $("info").textContent = "";
+  });
+  session.addEventListener("end", () => { location.reload(); });
+  renderer.setAnimationLoop((t, frame) => {
+    if (frame && !placed) {
+      const hit = frame.getHitTestResults(src)[0];
+      reticle.visible = !!hit;
+      if (hit) reticle.matrix.fromArray(hit.getPose(renderer.xr.getReferenceSpace()).transform.matrix);
+    }
+    renderer.render(scene, camera);
+  });
+  $("bar").classList.add("hide");
+  $("info").textContent = "Point at a table or floor, tap to place the roof.";
+};
+
+renderer.setAnimationLoop(() => {
+  if (renderer.xr.isPresenting) return;
+  if (mode === "vr") {
+    if (hasGyro.on) camera.quaternion.copy(gyroQ);
+    stereo.render(scene, camera);
+  } else {
+    orbit.update();
+    renderer.render(scene, camera);
+  }
+});
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight); stereo.setSize(innerWidth, innerHeight);
+});
+window.__vr = { camera, orbit, scene, world };
+</script>
+</body>
+</html>
