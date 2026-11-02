@@ -120,6 +120,8 @@ const M = {
   paving: new THREE.MeshStandardMaterial({ map: pavingTex, bumpMap: pavingTex, bumpScale: 1.2, roughness: 0.9 }),
   window: new THREE.MeshPhysicalMaterial({ color: 0x1d2c3b, roughness: 0.05, metalness: 0.2, clearcoat: 1 }),
   bark: new THREE.MeshStandardMaterial({ color: 0x5a4632, roughness: 1 }),
+  tank: new THREE.MeshStandardMaterial({ color: 0x23406b, roughness: 0.5, side: THREE.DoubleSide }),
+  door: new THREE.MeshStandardMaterial({ color: 0x4a3828, roughness: 0.8, side: THREE.DoubleSide }),
 };
 const leaf = (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.9 });
 
@@ -128,20 +130,31 @@ const surround = new THREE.Group();
 scene.add(surround);
 const GROUND_Y = -9;                                      // roof is 9 m above the ground
 function add(mesh, x, y, z) { mesh.position.set(x, y, z); mesh.castShadow = mesh.receiveShadow = true; surround.add(mesh); return mesh; }
-add(new THREE.Mesh(new THREE.BoxGeometry(11.6, 9, 7.6), M.stucco), 6, -4.5 - 0.001, -4);
-for (let f = 0; f < 3; f++) {                              // windows on the four faces, three floors
-  const y = -7.4 + f * 3 + 0.2;
-  for (let k = 0; k < 4; k++) {
-    const x = 6 + (k - 1.5) * 2.6;
-    add(new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.5, 0.06), M.window), x, y, -4 + 3.8);
-    add(new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.5, 0.06), M.window), x, y, -4 - 3.8);
+// Building body follows the footprint in models/rooftop_solar.json (cells in plan x/y, metres):
+// an L with windows only where a wall faces outside, and an entrance on the front.
+const inside = (cells, px, py) => cells.some(([x0, y0, x1, y1]) => px > x0 && px < x1 && py > y0 && py < y1);
+function buildBody(cells) {
+  for (const [x0, y0, x1, y1] of cells)
+    add(new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 9, y1 - y0), M.stucco), (x0 + x1) / 2, -4.5 - 0.001, -(y0 + y1) / 2);
+  const faces = [[0, -1], [0, 1], [-1, 0], [1, 0]];       // plan normals: front, back, left, right
+  for (const [x0, y0, x1, y1] of cells) for (const [nx, ny] of faces) {
+    const alongX = ny !== 0, len = alongX ? x1 - x0 : y1 - y0;
+    const fx = nx < 0 ? x0 : nx > 0 ? x1 : 0, fy = ny < 0 ? y0 : ny > 0 ? y1 : 0;
+    for (let t = 1.0; t <= len - 1.0 + 1e-6; t += 2.6) {
+      const px = alongX ? x0 + t : fx, py = alongX ? fy : y0 + t;
+      if (inside(cells, px + nx * 0.3, py + ny * 0.3)) continue;
+      for (let f = 0; f < 3; f++) {
+        if (f === 0 && ny < 0 && Math.abs(px - 6) < 1.6) continue;   // entrance, no window
+        const w = new THREE.Mesh(new THREE.BoxGeometry(alongX ? 1.3 : 0.06, 1.5, alongX ? 0.06 : 1.3), M.window);
+        add(w, px + nx * 0.03, -7.4 + f * 3 + 0.2, -(py + ny * 0.03));
+      }
+    }
   }
-  for (let k = 0; k < 3; k++) {
-    const z = -4 + (k - 1) * 2.3;
-    add(new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.5, 1.3), M.window), 6 + 5.8, y, z);
-    add(new THREE.Mesh(new THREE.BoxGeometry(0.06, 1.5, 1.3), M.window), 6 - 5.8, y, z);
-  }
+  add(new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.4, 0.08), M.door), 6, GROUND_Y + 1.2, 0.04);
+  add(new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.12, 1.2), M.stucco), 6, GROUND_Y + 2.7, 0.6);   // porch canopy
 }
+fetch("models/rooftop_solar.json").then((r) => r.json()).then((j) => j.cells)
+  .catch(() => [[0, 0, 12, 8]]).then(buildBody);
 const ground = add(new THREE.Mesh(new THREE.PlaneGeometry(900, 900), M.grass), 6, GROUND_Y, -4);
 ground.rotation.x = -Math.PI / 2; ground.castShadow = false;
 const apron = add(new THREE.Mesh(new THREE.PlaneGeometry(22, 18), M.paving), 6, GROUND_Y + 0.02, -4);
@@ -199,13 +212,15 @@ new GLTFLoader().load("models/rooftop_solar.glb", (gltf) => {
     if (m.map) {                                          // panel glass: glossy, cell texture kept
       panels += o.geometry.attributes.position.count / 4;
       o.material = new THREE.MeshPhysicalMaterial({ flatShading: true, map: m.map, roughness: 0.32, metalness: 0.1, clearcoat: 0.35, clearcoatRoughness: 0.08, envMapIntensity: 0.5 });
+    } else if (m.name === "tank" || m.name === "door") {  // no normals in the GLB: compute flat ones
+      o.geometry = o.geometry.toNonIndexed(); o.geometry.computeVertexNormals(); o.material = M[m.name];
     } else if (m.metalness > 0.5) {
       o.material = new THREE.MeshStandardMaterial({ flatShading: true, color: 0xb8bdc4, metalness: 0.9, roughness: 0.38 });
     } else {
       o.geometry = dress(o.geometry); o.material = M.roof;
     }
   });
-  $("info").textContent = `Rooftop 12 x 8 m, ${panels} solar panels. Drag to orbit, pinch to zoom.`;
+  $("info").textContent = `L-shaped rooftop with stair room, store and water tanks, ${panels} solar panels. Drag to orbit, pinch to zoom.`;
 }, undefined, () => { $("info").textContent = "Could not load models/rooftop_solar.glb"; });
 
 let mode = "orbit";

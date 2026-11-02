@@ -21,6 +21,8 @@ class RooftopSpec:
     slab_thickness: float = 150
     parapet_height: float = 900
     parapet_thickness: float = 200
+    notch_length: float = 0   # L-shaped building: this corner (+x, +y) is cut away
+    notch_width: float = 0
 
     def __post_init__(self):
         for k in ("length", "width", "slab_thickness", "parapet_height", "parapet_thickness"):
@@ -28,6 +30,11 @@ class RooftopSpec:
                 raise ValueError(f"{k} must be positive")
         if 2 * self.parapet_thickness >= min(self.length, self.width):
             raise ValueError("Parapets are thicker than the roof allows")
+        if self.notch_length < 0 or self.notch_width < 0 or (self.notch_length > 0) != (self.notch_width > 0):
+            raise ValueError("notch_length and notch_width must both be positive, or both zero")
+        if self.notch_length and (self.notch_length >= self.length - 2 * self.parapet_thickness
+                                  or self.notch_width >= self.width - 2 * self.parapet_thickness):
+            raise ValueError("The notch leaves no roof")
 
     @classmethod
     def from_json(cls, path):
