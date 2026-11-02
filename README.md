@@ -61,6 +61,7 @@ ETH3D terrace dense cloud: `colmap image_undistorter` on `dslr_calibration_jpg` 
   within 20° (a table); a plain wall is rarely detected and the hit lands on the floor, so there the tags' plane is
   used. On a wall the array hangs flush (no rack), rows run level and columns run down the wall (plumbAxes).
 - Tilted panels stand on a rail-and-leg rack and cast soft shadows on the table.
+- Realism: panels reflect the real room (ARCore cube map, falls back to a studio environment), get camera grain, vignette and slight softness to match the phone image, and a contact shadow where they meet the surface.
 - Panels: type the number of rows and columns (1-10 each, on the start page or in the AR bar; panel.js
   gridLayout), the array is laid out again keeping its heading. − / + / Fit scale the whole array (auto fit fills the tag rectangle). A two-finger twist (and
   Panel 15°) turns the picked panel, or the whole array about its centre when none is picked. The HUD shows peak kW,

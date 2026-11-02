@@ -237,3 +237,51 @@ export function smoothLight(prev, rgb, k = 0.08, lo = 0.6, hi = 2.5) {
     intensity: prev.intensity + k * (target.intensity - prev.intensity),
   };
 }
+
+// ---------- realism: blending into the camera image ----------
+
+// The soft dark patch where a panel meets the surface: the frame and rails block the sky right
+// under it. Sized to the panel's footprint at this tilt plus `margin` of fade (metres); flush
+// panels touch the surface so the patch is dark, a tilted panel on its rack only darkens it a little.
+export function contactShadow(look, tiltDeg, margin = 0.06) {
+  const a = (tiltDeg * Math.PI) / 180;
+  const w = look.w + 2 * margin, d = look.d * Math.cos(a) + 2 * margin;
+  return { w, d, opacity: a === 0 ? (look.flush ? 0.6 : 0.45) : 0.22, core: [look.w / w, (look.d * Math.cos(a)) / d] };
+}
+
+// n x n alpha image (RGBA, alpha in every channel) of that patch: solid over the `core` fraction of
+// each side, easing to 0 at the edge with a smoothstep so it has no visible rim.
+export function contactAlpha(n, core) {
+  const out = new Uint8ClampedArray(n * n * 4);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const u = Math.abs((2 * (x + 0.5)) / n - 1), v = Math.abs((2 * (y + 0.5)) / n - 1);
+    const dx = Math.max(0, u - core[0]) / Math.max(1e-6, 1 - core[0]), dy = Math.max(0, v - core[1]) / Math.max(1e-6, 1 - core[1]);
+    const t = Math.min(1, Math.hypot(dx, dy)), a = 1 - t * t * (3 - 2 * t), i = (y * n + x) * 4;
+    out[i] = out[i + 1] = out[i + 2] = out[i + 3] = Math.round(255 * a);
+  }
+  return out;
+}
+
+// Sensor grain to add to the rendered panels so they are as noisy as the camera image around them:
+// a dim room makes the phone raise its gain, so the less light (the eased sun intensity), the more grain.
+export function grainFor(intensity, lo = 0.6, hi = 2.5, most = 0.04, least = 0.012) {
+  const t = Math.min(1, Math.max(0, (intensity - lo) / (hi - lo)));
+  return most + t * (least - most);
+}
+
+// three.js fragment shader with the camera look added at the very end: per-pixel grain that changes
+// every frame (seed) and the lens's darker corners (vignette over the render size res).
+export function cameraLookShader(src) {
+  if (!src.includes("void main() {") || !src.includes("#include <dithering_fragment>")) throw new Error("not a three.js fragment shader");
+  return src
+    .replace("void main() {", "uniform float grainAmt, grainSeed, vignetteAmt;\nuniform vec2 grainRes;\nvoid main() {")
+    .replace("#include <dithering_fragment>", `#include <dithering_fragment>
+  vec2 lookUv = gl_FragCoord.xy / grainRes - 0.5;
+  gl_FragColor.rgb *= 1.0 - vignetteAmt * dot(lookUv, lookUv);
+  gl_FragColor.rgb += grainAmt * (fract(sin(dot(gl_FragCoord.xy + grainSeed, vec2(12.9898, 78.233))) * 43758.5453) - 0.5);`);
+}
+
+// What to ask the light probe for: ARCore's cube map of the room in the format the session prefers,
+// so the glass reflects the real surroundings. No preference = an older browser: plain light estimate.
+export const lightProbeOptions = (session) =>
+  session && session.preferredReflectionFormat ? { reflectionFormat: session.preferredReflectionFormat } : undefined;

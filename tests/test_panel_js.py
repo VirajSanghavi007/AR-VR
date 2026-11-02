@@ -197,7 +197,7 @@ def test_page_fits_the_panel_not_the_roof():
     html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
     assert "terrace_anchor.json" not in html and "m roof" not in html
     for hook in ("setDesign()", "arrayBounds(panels, l.w, l.d)", "moveBox(rect.width, rect.height, turns, scale, l.w, l.d)",
-                 "b.minX + design.cx", "b.minZ + design.cz", "clampToBox([t.roof[0] + grabOffset[0]", "panels shown", "./panel.js?v=8"):
+                 "b.minX + design.cx", "b.minZ + design.cz", "clampToBox([t.roof[0] + grabOffset[0]", "panels shown", "./panel.js?v=9"):
         assert hook in html, hook
 
 
@@ -437,14 +437,88 @@ def test_smooth_light_eases_and_clamps(node_available):
 def test_page_lights_and_draws_the_panels_realistically():
     html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
     for hook in ("renderer.toneMapping = THREE.ACESFilmicToneMapping;", '"dom-overlay", "light-estimation"]',
-                 "session.requestLightProbe().then((p) => { lightProbe = p; })", "lightProbe = null; light = { ...SUN };",
+                 "session.requestLightProbe(lightProbeOptions(session)).then((p) => { lightProbe = p; useRoomReflections(p); })", "lightProbe = null; light = { ...SUN };",
                  "if (lightProbe) matchLight(frame.getLightEstimate(lightProbe));",
                  "light = smoothLight(light, [i.x, i.y, i.z]);", "sun.color.setRGB(...light.color);",
                  "sun.intensity = light.intensity;", "hemi.intensity = light.intensity * SKY_PER_SUN;",
                  "const W = 1024, H = Math.round((W * look.d) / look.w)",
                  "const top = !look.halfCut || row % 2 === 0, bottom = !look.halfCut || row % 2 === 1;",
                  "chamferCell(x, y, w, h, w * 0.07, top, bottom), k = cellShade(i);", "for (let k2 = 1; k2 <= 9; k2++)",
-                 "roughness: 0.45, metalness: 0, envMap: reflections(), envMapIntensity: 0.7"):
+                 "cameraLook(new THREE.MeshStandardMaterial({ map, roughness: 0.45, metalness: 0, envMapIntensity: 0.7"):
         assert hook in html, hook
     # the sun keeps its place over the tags: the estimate never moves it (a swinging glint was the flicker)
     assert "primaryLightDirection" not in html
+
+
+# ---------- blending into the camera image: contact shadow, grain + vignette, room reflections ----------
+
+STD = {"w": 1.7, "d": 1.1}
+
+
+def test_contact_shadow_covers_the_footprint_with_a_fade(node_available):
+    flat = run(f"P.contactShadow({json.dumps(STD)}, 0, 0.06)")
+    assert flat["w"] == pytest.approx(1.82) and flat["d"] == pytest.approx(1.22)
+    assert flat["core"] == pytest.approx([1.7 / 1.82, 1.1 / 1.22]) and flat["opacity"] == pytest.approx(0.45)
+    tilted = run(f"P.contactShadow({json.dumps(STD)}, 15)")                  # footprint shrinks by cos(tilt)
+    assert tilted["d"] == pytest.approx(1.1 * np.cos(np.radians(15)) + 0.12)
+    assert tilted["core"][1] == pytest.approx(1.1 * np.cos(np.radians(15)) / tilted["d"])
+    assert tilted["opacity"] < flat["opacity"]                               # raised on a rack: lighter
+    flush = run(f"P.contactShadow({json.dumps({**STD, 'flush': True})}, 0)")
+    assert flush["opacity"] > flat["opacity"]                                # glass on the surface: darkest
+
+
+def test_contact_alpha_is_solid_in_the_core_and_fades_to_the_edge(node_available):
+    n = 32
+    a = np.array(run(f"Array.from(P.contactAlpha({n}, [0.5, 0.5]))")).reshape(n, n, 4)
+    assert (a[..., 0] == a[..., 3]).all() and (a[..., 1] == a[..., 3]).all()
+    alpha = a[..., 3]
+    assert alpha[n // 2, n // 2] == 255 and alpha[8:24, 8:24].min() == 255     # core = middle half
+    assert alpha[0, 0] == 0 and alpha[n // 2, 0] < 10                           # corners and edges fade out
+    row = alpha[n // 2, : n // 2]
+    assert (np.diff(row.astype(int)) >= 0).all()                                # no rim: rises monotonically
+    assert (alpha == alpha[::-1]).all() and (alpha == alpha[:, ::-1]).all()     # symmetric
+    wide = np.array(run(f"Array.from(P.contactAlpha({n}, [0.9, 0.2]))")).reshape(n, n, 4)[..., 3]
+    assert wide[n // 2, 2] == 255 and wide[2, n // 2] < 255                     # core per side
+    assert run("Array.from(P.contactAlpha(4, [1, 1]))")[3] == 255               # core = all: no divide by zero
+
+
+def test_grain_rises_as_the_light_drops(node_available):
+    assert run("P.grainFor(0.6)") == pytest.approx(0.04) and run("P.grainFor(2.5)") == pytest.approx(0.012)
+    assert run("P.grainFor(0.1)") == pytest.approx(0.04) and run("P.grainFor(9)") == pytest.approx(0.012)   # clamped
+    assert run("P.grainFor(1.55)") == pytest.approx((0.04 + 0.012) / 2)
+
+
+FRAG = "uniform vec3 diffuse;\nvoid main() {\n  vec4 c = vec4(1.0);\n  #include <dithering_fragment>\n}"
+
+
+def test_camera_look_shader_adds_grain_and_vignette_at_the_end(node_available):
+    out = run(f"P.cameraLookShader({json.dumps(FRAG)})")
+    assert "uniform float grainAmt, grainSeed, vignetteAmt;\nuniform vec2 grainRes;\nvoid main() {" in out
+    head, tail = out.split("#include <dithering_fragment>")
+    assert "gl_FragColor" not in head                                           # after three's own colour
+    assert "gl_FragCoord.xy / grainRes - 0.5" in tail and "1.0 - vignetteAmt * dot(lookUv, lookUv)" in tail
+    assert "grainAmt * (fract(sin(dot(gl_FragCoord.xy + grainSeed" in tail and tail.rstrip().endswith("}")
+    with pytest.raises(RuntimeError, match="not a three.js fragment shader"):
+        run('P.cameraLookShader("void main() {}")')
+
+
+def test_light_probe_options_ask_for_the_room_cube_map(node_available):
+    assert run('P.lightProbeOptions({ preferredReflectionFormat: "srgba8" })') == {"reflectionFormat": "srgba8"}
+    assert run("P.lightProbeOptions({}) === undefined") is True
+    assert run("P.lightProbeOptions(null) === undefined") is True
+
+
+def test_page_blends_the_panels_into_the_camera_image():
+    html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
+    for hook in ("renderer.xr.setFramebufferScaleFactor(0.8);", "scene.environment = reflections();",
+                 "const cube = binding.getReflectionCubeMap(probe);", "renderer.properties.get(realEnv).__webglTexture = cube;",
+                 "realEnv.needsPMREMUpdate = true;", "scene.environment = realEnv;",
+                 "s.fragmentShader = cameraLookShader(s.fragmentShader);", "camLook.grainAmt.value = grainFor(light.intensity);",
+                 "lookStep(t, layer ? layer.framebufferWidth : innerWidth, layer ? layer.framebufferHeight : innerHeight);",
+                 "camLook.grainRes.value.set(w, h);", "camLook.grainRes.value.copy(res);",
+                 "const c = contactShadow(l, deg);", "contact.scale.set(c.w, 1, c.d);", "contact.material.opacity = c.opacity;",
+                 "contact.material.alphaMap = contactMap(c.core);", "new THREE.DataTexture(contactAlpha(64, core), 64, 64)",
+                 "metals.set(color, cameraLook(new THREE.MeshStandardMaterial("):
+        assert hook in html, hook
+    assert "envMap: reflections()" not in html          # every material takes the scene's (real) environment
+    assert html.count("cameraLook(new THREE.") == 5     # face (both looks), glass edge, glass back, aluminium

@@ -155,7 +155,8 @@ import { pixelRay, rayPlane, fitRectangle, fitFromTwo, fitFromThree, tagAxis, al
          scaleLabel, nextNiceScale, isStable, downsample, chooseTags, mostSeen, averageTwo, tagsMoved, onWall, tagCorners3D, surfacePlane, plumbAxes } from "./tagrect.js?v=7";
 import { PANEL_LOOKS, lookByKey, nextLook, cellLayout, panelHit, twistDelta, isLongPress, clampToBox,
          yawDeg, heightMap, borderPx, moveBox, gridLayout, clampCount, arrayBounds, relayout,
-         energy, mountParts, turnArray, cellShade, chamferCell, smoothLight } from "./panel.js?v=8";
+         energy, mountParts, turnArray, cellShade, chamferCell, smoothLight,
+         contactShadow, contactAlpha, grainFor, cameraLookShader, lightProbeOptions } from "./panel.js?v=9";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { composite, caption, shotName } from "./snap.js?v=2";
 
@@ -235,8 +236,12 @@ function buildScene() {
   // filmic response: bright frames and glass highlights roll off like a camera image instead of clipping
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.25;
+  // the camera image is upscaled to the screen, so panels drawn at full screen resolution look
+  // sharper than everything around them: render them a touch softer
+  renderer.xr.setFramebufferScaleFactor(0.8);
   document.body.appendChild(renderer.domElement);
   scene = new THREE.Scene();
+  scene.environment = reflections();             // swapped for the real room's cube map once ARCore has one
   camera = new THREE.PerspectiveCamera();
   hemi = new THREE.HemisphereLight(0xdfe9f5, 0x6b6257, SUN.intensity * SKY_PER_SUN);   // cool sky, warm table bounce
   scene.add(hemi);
@@ -331,24 +336,67 @@ function panelTexture(look) {
   return t;
 }
 
-let envMap = null;
-function reflections() {                                       // soft studio light for the glass to pick up
+let envMap = null, realEnv = null;
+function reflections() {                                       // soft studio light until the real room's is in
   if (!envMap) envMap = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
   return envMap;
+}
+
+// ARCore's cube map of the surroundings becomes the scene's environment, so the glass and frames
+// reflect the real window, walls and sky (same hand-over as three.js XREstimatedLight).
+function useRoomReflections(probe) {
+  if (!binding || !binding.getReflectionCubeMap) return;
+  const gl = renderer.getContext();
+  if (session.preferredReflectionFormat === "rgba16f") gl.getExtension("OES_texture_half_float");
+  realEnv = realEnv || new THREE.WebGLCubeRenderTarget(16).texture;
+  probe.addEventListener("reflectionchange", () => {
+    const cube = binding.getReflectionCubeMap(probe);
+    if (!cube) return;
+    renderer.properties.get(realEnv).__webglTexture = cube;
+    realEnv.needsPMREMUpdate = true;
+    scene.environment = realEnv;
+  });
+}
+
+// The camera look on every panel material (panel.js cameraLookShader): grain and darker corners like
+// the phone's own image. One set of uniforms for all of them, updated each frame by lookStep().
+const camLook = { grainAmt: { value: grainFor(SUN.intensity) }, grainSeed: { value: 0 }, vignetteAmt: { value: 0.45 },
+                grainRes: { value: new THREE.Vector2(1, 1) } };
+function cameraLook(m) {
+  m.onBeforeCompile = (s) => { Object.assign(s.uniforms, camLook); s.fragmentShader = cameraLookShader(s.fragmentShader); };
+  return m;
+}
+const screenPx = () => renderer.getDrawingBufferSize(new THREE.Vector2()).toArray();
+function lookStep(t, w, h) {
+  camLook.grainAmt.value = grainFor(light.intensity);
+  camLook.grainSeed.value = (t * 0.37) % 997;
+  camLook.grainRes.value.set(w, h);
+}
+
+// the contact patch's alpha image, one per tilt and look (panel.js contactShadow/contactAlpha)
+const contactMaps = new Map();
+function contactMap(core) {
+  const key = core.map((v) => v.toFixed(3)).join();
+  if (!contactMaps.has(key)) {
+    const t = new THREE.DataTexture(contactAlpha(64, core), 64, 64);
+    t.needsUpdate = true;
+    contactMaps.set(key, t);
+  }
+  return contactMaps.get(key);
 }
 
 function buildPanel(look) {
   const obj = new THREE.Group(), tilt = new THREE.Group(), glass = !!look.texture;
   const map = panelTexture(look);
   const face = glass
-    ? new THREE.MeshPhysicalMaterial({ map, bumpMap: map.userData.bump, bumpScale: look.relief, roughness: 0.5, metalness: 0,
-                                       clearcoat: 1, clearcoatRoughness: 0.05, envMap: reflections(), envMapIntensity: 0.9 })
+    ? cameraLook(new THREE.MeshPhysicalMaterial({ map, bumpMap: map.userData.bump, bumpScale: look.relief, roughness: 0.5, metalness: 0,
+                                       clearcoat: 1, clearcoatRoughness: 0.05, envMapIntensity: 0.9 }))
     // glass over the cells: a soft reflection of the room instead of a hard sun glint, which on a flat
     // glossy face lit the whole panel up and blacked it out again as the phone shook
-    : new THREE.MeshStandardMaterial({ map, roughness: 0.45, metalness: 0, envMap: reflections(), envMapIntensity: 0.7,
-                                       side: THREE.DoubleSide });
+    : cameraLook(new THREE.MeshStandardMaterial({ map, roughness: 0.45, metalness: 0, envMapIntensity: 0.7,
+                                       side: THREE.DoubleSide }));
   const edge = glass
-    ? new THREE.MeshPhysicalMaterial({ color: look.edge, roughness: 0.12, metalness: 0, clearcoat: 1, envMap: reflections() })
+    ? cameraLook(new THREE.MeshPhysicalMaterial({ color: look.edge, roughness: 0.12, metalness: 0, clearcoat: 1 }))
     : aluminium(look.frame);
   const T = glass ? look.thickMm / 1000 : 0.035, mesh = new THREE.Mesh(new THREE.BoxGeometry(look.w, T, look.d),
                                          [edge, edge, face, look.gap ? edge : face, edge, edge]);
@@ -356,11 +404,16 @@ function buildPanel(look) {
   tilt.add(mesh);
   if (glass) {                                                 // dark shadow line where the glass meets the wall
     const back = new THREE.Mesh(new THREE.BoxGeometry(look.w - 0.03, 0.008, look.d - 0.03),
-                                new THREE.MeshStandardMaterial({ color: 0x14100e, roughness: 0.9 }));
+                                cameraLook(new THREE.MeshStandardMaterial({ color: 0x14100e, roughness: 0.9 })));
     back.position.y = -0.006;
     tilt.add(back);
   }
   obj.add(tilt);
+  // the soft dark patch on the surface right under the panel (sized per tilt in updatePanels)
+  const contact = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
+                                 new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, depthWrite: false }));
+  contact.position.y = 0.0005;
+  obj.add(contact);
   const rack = new THREE.Group();
   obj.add(rack);
   const ring = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(
@@ -368,14 +421,14 @@ function buildPanel(look) {
     new THREE.LineBasicMaterial({ color: 0xffd23f }));
   ring.material.depthTest = false; ring.renderOrder = 1;      // drawn over the panels, so the picked one shows in an array
   obj.add(ring);
-  obj.userData = { look, tilt, mesh, ring, T, rack, rackTilt: null };
+  obj.userData = { look, tilt, mesh, ring, T, rack, rackTilt: null, contact };
   return obj;
 }
 
 const metals = new Map();
 function aluminium(color) {                                    // brushed metal that reflects the room, not flat grey
   if (!metals.has(color))
-    metals.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.85, envMap: reflections() }));
+    metals.set(color, cameraLook(new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.85 })));
   return metals.get(color);
 }
 
@@ -401,11 +454,18 @@ function updatePanels() {
   if (!design) return;
   const deg = tiltNow(), a = (deg * Math.PI) / 180;
   panelObjs.forEach((obj, i) => {
-    const p = panels[i], { tilt, mesh, ring, T } = obj.userData;
+    const p = panels[i], { tilt, mesh, ring, T, contact, look: l } = obj.userData;
     obj.position.set(p.x, design.y, p.z);
     obj.rotation.y = p.yaw;
     tilt.rotation.x = a;                                       // back edge (-z) up
-    if (obj.userData.rackTilt !== deg) tilt.position.y = buildRack(obj, deg);   // panel rests on its rails
+    if (obj.userData.rackTilt !== deg) {
+      tilt.position.y = buildRack(obj, deg);                   // panel rests on its rails
+      const c = contactShadow(l, deg);
+      contact.scale.set(c.w, 1, c.d);
+      contact.material.opacity = c.opacity;
+      contact.material.alphaMap = contactMap(c.core);
+      contact.material.needsUpdate = true;
+    }
     mesh.position.y = T / 2;
     ring.visible = i === sel;
   });
@@ -489,8 +549,11 @@ function takeShot(frame, view) {
   const prevTarget = renderer.getRenderTarget(), prevColor = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha();
   renderer.xr.enabled = false; scene.background = null; reticle.visible = false;
   rings.forEach((r) => { r.visible = false; });
+  const res = camLook.grainRes.value.clone();
+  camLook.grainRes.value.set(w, h);                            // corners of the photo, not of the screen
   renderer.setRenderTarget(rt); renderer.setClearColor(0x000000, 0); renderer.clear();
   renderer.render(scene, shotCam);
+  camLook.grainRes.value.copy(res);
   const scenePx = new Uint8Array(w * h * 4);
   renderer.readRenderTargetPixels(rt, 0, 0, w, h, scenePx);
   renderer.setRenderTarget(prevTarget); renderer.setClearColor(prevColor, prevAlpha);
@@ -689,8 +752,10 @@ $("start").onclick = async () => {
   try { hitSource = await session.requestHitTestSource({ space: viewer, entityTypes: ["plane", "point"] }); }
   catch (e) { hitSource = await session.requestHitTestSource({ space: viewer }); }
   lightProbe = null; light = { ...SUN };
-  if (session.requestLightProbe) session.requestLightProbe().then((p) => { lightProbe = p; }).catch(() => {});
+  if (session.requestLightProbe)
+    session.requestLightProbe(lightProbeOptions(session)).then((p) => { lightProbe = p; useRoomReflections(p); }).catch(() => {});
   session.addEventListener("end", () => {
+    scene.environment = reflections();
     $("overlay").classList.remove("on"); hitSource = null; relock(); renderer.setAnimationLoop(null);
   });
   relock();
@@ -707,6 +772,8 @@ $("start").onclick = async () => {
       if (view) { lastProj = Array.from(view.projectionMatrix); lastPose = Array.from(view.transform.matrix); }
       if (view) detectStep(frame, view);
       if (lightProbe) matchLight(frame.getLightEstimate(lightProbe));
+      const layer = session.renderState.baseLayer;
+      lookStep(t, layer ? layer.framebufferWidth : innerWidth, layer ? layer.framebufferHeight : innerHeight);
       if (view && wantShot) takeShot(frame, view);
       if (rect && anchor && frame.trackedAnchors && frame.trackedAnchors.has(anchor)) {
         const ap = frame.getPose(anchor.anchorSpace, refSpace);
@@ -850,7 +917,7 @@ window.__tagar = {
     camera.position.set(r.center[0], r.center[1] + 1.6, r.center[2] + 0.001);
     camera.up.set(0, 0, -1); camera.lookAt(...r.center);
     scene.background = new THREE.Color(0x8a9099);
-    renderer.setAnimationLoop(() => renderer.render(scene, camera));
+    renderer.setAnimationLoop((t) => { lookStep(t, ...screenPx()); renderer.render(scene, camera); });
     return this.state();
   },
   press(id) { $(id).click(); return this.state(); },
@@ -900,6 +967,7 @@ window.__tagar = {
     camera.matrixWorldInverse.copy(emu.camera.matrixWorldInverse);
     scene.background = emu.target.texture;
     renderer.setRenderTarget(null);
+    lookStep(performance.now(), ...screenPx());
     renderer.render(scene, camera);
     return { log, rect: rect && { center: rect.center, width: rect.width, height: rect.height, u: rect.u, tags: rect.tags },
              ...this.state() };
