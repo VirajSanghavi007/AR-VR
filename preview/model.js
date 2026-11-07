@@ -6,7 +6,7 @@
 // The model is shown at its real size times the scale slider, never at the panel array's scale.
 
 // Metres per model unit.
-export const UNIT_M = { m: 1, cm: 0.01, mm: 0.001, in: 0.0254 };
+export const UNIT_M = { m: 1, cm: 0.01, mm: 0.001, in: 0.0254, ft: 0.3048 };
 
 // Unit guess from the model's largest raw dimension: real things in a room are well under 100 m,
 // so a model over 100 units across was drawn in millimetres (the brief's "wrong by 1000x" case).
@@ -135,4 +135,52 @@ export function roomCheck(W, H, along, height) {
   if (!Number.isFinite(height)) out.push("type the height of the tags' centre above the floor");
   else if (height < 0 || height > H) out.push(`the tags' centre is ${height.toFixed(2)} m up but the room is ${H.toFixed(2)} m high`);
   return out;
+}
+
+// ---------- which file is the model (SketchUp exports, glTF) ----------
+// SketchUp saves .skp, which no browser can read; its exports can be: File > Export > 3D Model >
+// COLLADA (.dae, any SketchUp) or OBJ (.obj + .mtl colours, SketchUp Pro). glTF (.glb/.gltf) from Blender etc.
+const KINDS = { glb: "gltf", gltf: "gltf", dae: "dae", obj: "obj" };
+const PRIORITY = ["gltf", "dae", "obj"];
+export const extOf = (name) => { const m = /\.([^./\\]+)$/.exec(String(name || "")); return m ? m[1].toLowerCase() : ""; };
+
+// The loader a file needs: "gltf", "dae", "obj", or null for a side file (.mtl, textures).
+export function modelKind(name) {
+  const e = extOf(name);
+  if (e === "skp") throw new Error("a .skp file cannot be opened in a browser: in SketchUp use File > Export > 3D Model and pick COLLADA (.dae) or OBJ");
+  return KINDS[e] || null;
+}
+
+// From the files picked together, the model itself (glTF first, then .dae, then .obj) and the rest
+// (its .mtl and textures). Throws a sentence if none of them is a model.
+export function pickModelFiles(names) {
+  const kinds = names.map(modelKind);
+  for (const k of PRIORITY) {
+    const i = kinds.indexOf(k);
+    if (i >= 0) return { main: i, kind: k, extras: names.map((_, j) => j).filter((j) => j !== i) };
+  }
+  throw new Error("no model among these files: pick a .glb, .gltf, .dae or .obj (with its .mtl and textures)");
+}
+
+// File name a loader asks for, without folders or ?query, lower case, so "Textures\Roof.JPG" finds "roof.jpg".
+export const baseName = (url) => {
+  const s = String(url).split(/[?#]/)[0].split(/[\\/]/).pop();
+  try { return decodeURIComponent(s).toLowerCase(); } catch (e) { return s.toLowerCase(); }
+};
+
+// Units an OBJ says it was drawn in. SketchUp writes "# File units = inches" (or meters, centimeters,
+// millimeters, feet) in the header; OBJ itself has no units. null when the file does not say.
+const OBJ_UNITS = { inches: "in", inch: "in", meters: "m", meter: "m", metres: "m", centimeters: "cm", centimetres: "cm",
+                    millimeters: "mm", millimetres: "mm", feet: "ft", foot: "ft" };
+export function objFileUnits(text) {
+  const m = /^#\s*File units\s*=\s*([A-Za-z]+)/im.exec(String(text).slice(0, 2000));
+  return m ? OBJ_UNITS[m[1].toLowerCase()] || null : null;
+}
+
+// Units a freshly loaded file is in: COLLADA carries its own <unit> (three.js already converts it to
+// metres), an OBJ may say in its header, glTF is metres by spec but often exported wrong, so guess.
+export function fileUnits(kind, objUnits = null) {
+  if (kind === "dae") return "m";
+  if (kind === "obj") return objUnits;
+  return null;
 }

@@ -119,30 +119,32 @@ label.f input[type=file] { font: .85rem var(--sans); padding: 6px; }
 
   <div class="card">
     <p class="label">Designer's model (optional)</p>
-    <p class="note">A <b>.glb</b> from the design team, ideally in metres (.fbx, .dwg, .rvt or .skp: convert to .glb first, e.g. in Blender).
+    <p class="note">A <b>.glb</b> from the design team, ideally in metres, or a <b>SketchUp</b> export: in SketchUp, File &gt; Export &gt; 3D Model,
+      <b>COLLADA (.dae)</b> or <b>OBJ</b> (pick the .obj together with its .mtl and texture files). .fbx, .dwg or .rvt: convert to .glb first, e.g. in Blender.
       Once the tags lock, press <b>Place model</b> and tap the wall or floor where it goes; <b>Turn</b> and <b>Scale</b> adjust it,
       <b>1 m bar</b> lays a 1 m striped bar (10 cm stripes) beside it to check against a tape measure, <b>Save pose</b> downloads where it is.</p>
     <div class="row">
-      <label class="f">Model file (.glb)<input id="m-file" type="file" accept=".glb,model/gltf-binary"></label>
+      <label class="f">Model file (.glb, .dae, .obj)<input id="m-file" type="file" accept=".glb,.gltf,.dae,.obj,.mtl,.bin,.png,.jpg,.jpeg,.webp,.skp" multiple></label>
       <label class="f">Model units<select id="m-units">
         <option value="auto">Auto (guess)</option><option value="m">metres</option><option value="cm">centimetres</option>
-        <option value="mm">millimetres</option><option value="in">inches</option></select></label>
+        <option value="mm">millimetres</option><option value="in">inches</option><option value="ft">feet</option></select></label>
       <label class="f">Saved pose (.json)<input id="m-pose" type="file" accept=".json,application/json"></label>
+      <button id="m-sketchup" type="button">Try a SketchUp export (solar pergola .dae)</button>
     </div>
     <p class="note" id="m-info">No model loaded.</p>
   </div>
 
   <div class="card">
     <p class="label">Room model (optional)</p>
-    <p class="note">A <b>.glb</b> of the whole room (walls, floor, ceiling) to line up with the real one and walk around inside.
+    <p class="note">A <b>.glb</b> (or SketchUp .dae / .obj) of the whole room (walls, floor, ceiling) to line up with the real one and walk around inside.
       Tape the tags on one wall, pick which wall of the model that is, and type where the tags' centre is: its distance from that
       wall's left corner (facing the wall) and its height above the floor. In AR, turn round: the model's corners and edges
       (cyan lines) should sit on the real ones; <b>Right</b> and <b>Up</b> nudge it, <b>See-through</b> swaps solid and ghost walls.</p>
     <div class="row">
-      <label class="f">Room file (.glb)<input id="r-file" type="file" accept=".glb,model/gltf-binary"></label>
+      <label class="f">Room file (.glb, .dae, .obj)<input id="r-file" type="file" accept=".glb,.gltf,.dae,.obj,.mtl,.bin,.png,.jpg,.jpeg,.webp,.skp" multiple></label>
       <label class="f">Room units<select id="r-units">
         <option value="auto">Auto (guess)</option><option value="m">metres</option><option value="cm">centimetres</option>
-        <option value="mm">millimetres</option><option value="in">inches</option></select></label>
+        <option value="mm">millimetres</option><option value="in">inches</option><option value="ft">feet</option></select></label>
       <button id="r-sample" type="button">Use the sample room</button>
       <button id="r-duplex" type="button">Use a real room (duplex living room)</button>
     </div>
@@ -220,9 +222,13 @@ import { PANEL_LOOKS, lookByKey, nextLook, cellLayout, panelHit, twistDelta, isL
          contactShadow, contactAlpha, grainFor, cameraLookShader, lightProbeOptions } from "./panel.js?v=9";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { ColladaLoader } from "three/addons/loaders/ColladaLoader.js";
+import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
 import { UNIT_M, guessUnits, realSize, fmtSize, seat, mountTurnX, clampPct, clampDeg, rulerTicks, rulerStart,
          poseFileName, poseRecord, parsePose, sameTags,
-         wallFace, wallYaw, nextWall, parseLen, roomOffset, roomCheck } from "./model.js?v=2";
+         wallFace, wallYaw, nextWall, parseLen, roomOffset, roomCheck,
+         modelKind, pickModelFiles, baseName, objFileUnits, fileUnits } from "./model.js?v=3";
 import { composite, caption, shotName } from "./snap.js?v=2";
 
 const DETECT_EVERY_MS = 250, FOLLOW_EVERY_MS = 400, HIT_GRACE_MS = 500, MAX_ANGLE_ERR = 12, EDGE_WARN = 0.15;
@@ -903,32 +909,66 @@ regrid();
 let model = null, modelRoot = null, placing = false, showBar = false;
 let modelPose = { x: 0, z: 0, deg: 0, pct: 100, placed: false };
 const modelWall = () => !!(rect && onWall(rect.n));
-const modelUnits = () => ($("m-units").value === "auto" ? guessUnits(Math.max(...model.sizeRaw)) : $("m-units").value);
-const UNIT_NAMES = { m: "metres", cm: "centimetres", mm: "millimetres", in: "inches" };
+const modelUnits = () => ($("m-units").value === "auto" ? model.fileUnits || guessUnits(Math.max(...model.sizeRaw)) : $("m-units").value);
+const UNIT_NAMES = { m: "metres", cm: "centimetres", mm: "millimetres", in: "inches", ft: "feet" };
 
-function loadModel(url, name) {
+// Read a model file into a three.js object: glTF (.glb/.gltf), COLLADA (.dae, SketchUp's export) or OBJ (+ .mtl).
+// side = { basename: url } for the files picked with it (.mtl, textures, .bin); a loader asking for
+// "Textures/roof.jpg" gets the picked roof.jpg. Resolves { obj, kind, fileUnits } (fileUnits: the units the
+// file says it is in after loading, or null = guess). SketchUp faces are often drawn back to front, so
+// .dae/.obj materials show both sides.
+async function readModel(url, name, side = {}) {
+  const kind = modelKind(name);
+  if (!kind) throw new Error("not a model file: pick a .glb, .gltf, .dae or .obj");
+  const mgr = new THREE.LoadingManager();
+  mgr.setURLModifier((u) => side[baseName(u)] || u);
+  if (kind === "gltf") return { obj: (await new GLTFLoader(mgr).loadAsync(url)).scene, kind, fileUnits: fileUnits(kind) };
+  let obj, units = fileUnits(kind);
+  if (kind === "dae") obj = (await new ColladaLoader(mgr).loadAsync(url)).scene;
+  else {
+    const text = await (await fetch(url)).text(), loader = new OBJLoader(mgr);
+    units = fileUnits(kind, objFileUnits(text));
+    const lib = /^mtllib\s+(.+?)\s*$/m.exec(text);
+    if (lib) {
+      const mtlUrl = side[baseName(lib[1])] || (url.startsWith("blob:") ? null : new URL(lib[1], new URL(url, location.href)).href);
+      if (mtlUrl) {
+        try { const mats = await new MTLLoader(mgr).loadAsync(mtlUrl); mats.preload(); loader.setMaterials(mats); }
+        catch (e) { console.warn(`${lib[1]}: ${e.message || e}; grey instead`); }
+      }
+    }
+    obj = loader.parse(text);
+  }
+  obj.traverse((o) => { if (o.isMesh) for (const m of [o.material].flat()) m.side = THREE.DoubleSide; });
+  return { obj, kind, fileUnits: units };
+}
+
+// The picked files: which one is the model, and blob urls for the rest by name.
+function pickedModel(files) {
+  const list = [...files], { main } = pickModelFiles(list.map((f) => f.name)), side = {};
+  for (const f of list) side[f.name.toLowerCase()] = URL.createObjectURL(f);
+  return { url: side[list[main].name.toLowerCase()], name: list[main].name, side };
+}
+
+function loadModel(url, name, side = {}) {
   $("m-info").textContent = `Loading ${name}…`;
-  return new Promise((resolve) => {
-    new GLTFLoader().load(url, (gltf) => {
-      const obj = gltf.scene;
-      obj.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-      const sizeRaw = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3()).toArray();
-      try { guessUnits(Math.max(...sizeRaw)); } catch (e) { $("m-info").textContent = `${name}: ${e.message}`; resolve(null); return; }
-      model = { name, obj, sizeRaw };
-      modelPose.placed = false;
-      buildModel();
-      describeModel();
-      if (rect) { setButtons(true); place(); }
-      resolve(modelState());
-    }, undefined, (e) => { $("m-info").textContent = `Could not load ${name}: ${e.message || e}`; resolve(null); });
-  });
+  return readModel(url, name, side).then(({ obj, fileUnits: fu }) => {
+    obj.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    const sizeRaw = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3()).toArray();
+    try { guessUnits(Math.max(...sizeRaw)); } catch (e) { $("m-info").textContent = `${name}: ${e.message}`; return null; }
+    model = { name, obj, sizeRaw, fileUnits: fu };
+    modelPose.placed = false;
+    buildModel();
+    describeModel();
+    if (rect) { setButtons(true); place(); }
+    return modelState();
+  }, (e) => { $("m-info").textContent = `Could not load ${name}: ${e.message || e}`; return null; });
 }
 
 function describeModel() {
   if (!model) return;
   const u = modelUnits(), auto = $("m-units").value === "auto";
   $("m-info").innerHTML = `<b>${model.name}</b>: ${fmtSize(realSize(model.sizeRaw, u))} (width × height × depth), read as ${UNIT_NAMES[u]}` +
-    `${auto ? " (a guess: pick the units above if this size is wrong)" : ""}. In the file: ${model.sizeRaw.map((v) => +v.toPrecision(4)).join(" × ")} units.` +
+    `${auto ? (model.fileUnits ? " (as the file says)" : " (a guess: pick the units above if this size is wrong)") : ""}. In the file: ${model.sizeRaw.map((v) => +v.toPrecision(4)).join(" × ")} units.` +
     " Check these against the design drawings before placing it.";
 }
 
@@ -1052,9 +1092,11 @@ function modelState() {
 }
 
 $("m-file").onchange = () => {
-  const f = $("m-file").files[0];
-  if (f) loadModel(URL.createObjectURL(f), f.name);
+  if (!$("m-file").files.length) return;
+  try { const p = pickedModel($("m-file").files); loadModel(p.url, p.name, p.side); }
+  catch (e) { $("m-info").textContent = e.message; }
 };
+$("m-sketchup").onclick = () => { $("m-units").value = "auto"; loadModel("models/sample_sketchup_pergola.dae?v=1", "sample_sketchup_pergola.dae"); };
 $("m-units").onchange = () => { if (model) { buildModel(); describeModel(); } };
 $("m-pose").onchange = async () => { const f = $("m-pose").files[0]; if (f) usePose(await f.text()); };
 $("o-mplace").onclick = () => { placing = !placing; poseModel(); };
@@ -1068,38 +1110,36 @@ $("o-mscale").oninput = () => { modelPose.pct = clampPct($("o-mscale").value); p
 // face of the model goes on the tag wall) > metres per unit > the glTF scene. Needs the tags on a wall.
 let room = null, roomRoot = null, roomSeeThrough = true;
 const roomPos = { wall: "back", nudge: [0, 0] };
-const roomUnits = () => ($("r-units").value === "auto" ? guessUnits(Math.max(...room.sizeRaw)) : $("r-units").value);
+const roomUnits = () => ($("r-units").value === "auto" ? room.fileUnits || guessUnits(Math.max(...room.sizeRaw)) : $("r-units").value);
 const roomLen = () => [parseLen($("r-along").value), parseLen($("r-height").value)];
 const SEE_THROUGH = new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.14, depthWrite: false, side: THREE.DoubleSide });
 const ROOM_EDGE = new THREE.LineBasicMaterial({ color: 0x29d3ff });
 
-function loadRoom(url, name) {
+function loadRoom(url, name, side = {}) {
   $("r-info").textContent = `Loading ${name}…`;
-  return new Promise((resolve) => {
-    new GLTFLoader().load(url, (gltf) => {
-      const obj = gltf.scene, meshes = [];
-      obj.traverse((o) => { if (o.isMesh) meshes.push(o); });
-      for (const m of meshes) {                                  // walls are seen from inside: both sides, no shadows
-        m.castShadow = m.receiveShadow = false;
-        m.userData.solid = [m.material].flat().map((mt) => { const c = mt.clone(); c.side = THREE.DoubleSide; return c; });
-        m.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 25), ROOM_EDGE));
-      }
-      const sizeRaw = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3()).toArray();
-      try { guessUnits(Math.max(...sizeRaw)); } catch (e) { $("r-info").textContent = `${name}: ${e.message}`; resolve(null); return; }
-      room = { name, obj, meshes, sizeRaw };
-      buildRoom();
-      describeRoom();
-      if (rect) { setButtons(true); place(); }
-      resolve(roomState());
-    }, undefined, (e) => { $("r-info").textContent = `Could not load ${name}: ${e.message || e}`; resolve(null); });
-  });
+  return readModel(url, name, side).then(({ obj, fileUnits: fu }) => {
+    const meshes = [];
+    obj.traverse((o) => { if (o.isMesh) meshes.push(o); });
+    for (const m of meshes) {                                  // walls are seen from inside: both sides, no shadows
+      m.castShadow = m.receiveShadow = false;
+      m.userData.solid = [m.material].flat().map((mt) => { const c = mt.clone(); c.side = THREE.DoubleSide; return c; });
+      m.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 25), ROOM_EDGE));
+    }
+    const sizeRaw = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3()).toArray();
+    try { guessUnits(Math.max(...sizeRaw)); } catch (e) { $("r-info").textContent = `${name}: ${e.message}`; return null; }
+    room = { name, obj, meshes, sizeRaw, fileUnits: fu };
+    buildRoom();
+    describeRoom();
+    if (rect) { setButtons(true); place(); }
+    return roomState();
+  }, (e) => { $("r-info").textContent = `Could not load ${name}: ${e.message || e}`; return null; });
 }
 
 function describeRoom() {
   if (!room) return;
   const s = realSize(room.sizeRaw, roomUnits());
   $("r-info").innerHTML = `<b>${room.name}</b>: ${fmtSize(s)} (width × height × depth), read as ${UNIT_NAMES[roomUnits()]}` +
-    `${$("r-units").value === "auto" ? " (a guess)" : ""}. The tags go on its <b>${roomPos.wall}</b> wall (the model's ${wallFace(roomPos.wall)} side)` +
+    `${$("r-units").value === "auto" ? (room.fileUnits ? " (as the file says)" : " (a guess)") : ""}. The tags go on its <b>${roomPos.wall}</b> wall (the model's ${wallFace(roomPos.wall)} side)` +
     `; <b>Next wall</b> in AR tries the others.`;
 }
 
@@ -1169,7 +1209,11 @@ function roomState() {
   return st;
 }
 
-$("r-file").onchange = () => { const f = $("r-file").files[0]; if (f) loadRoom(URL.createObjectURL(f), f.name); };
+$("r-file").onchange = () => {
+  if (!$("r-file").files.length) return;
+  try { const p = pickedModel($("r-file").files); loadRoom(p.url, p.name, p.side); }
+  catch (e) { $("r-info").textContent = e.message; }
+};
 $("r-sample").onclick = () => loadRoom("models/sample_room.glb?v=1", "sample_room.glb");
 $("r-duplex").onclick = () => { $("r-units").value = "m"; loadRoom("models/duplex_living_room.glb?v=1", "duplex_living_room.glb"); };
 $("r-units").onchange = () => { if (room) { buildRoom(); describeRoom(); } };
@@ -1302,7 +1346,7 @@ window.__tagar = {
     return [((v.x + 1) / 2) * innerWidth, ((1 - v.y) / 2) * innerHeight];
   },
   roofAt(x, y) { return roofPoint(x, y); },
-  // CAD model checks: load a .glb by URL, put it at a room point [x, z], set turn/scale, read it back.
+  // CAD model checks: load a .glb / .dae / .obj by URL, put it at a room point [x, z], set turn/scale, read it back.
   loadModel(url, name, units = "auto") { $("m-units").value = units; return loadModel(url, name); },
   placeModel(p) { placeModel(p); return this.modelState(); },
   setModel({ deg, pct, bar } = {}) {
@@ -1314,6 +1358,7 @@ window.__tagar = {
   savePose() { return savePose(); },
   loadPose(obj) { return usePose(obj); },
   modelState,
+  modelObj: () => (model ? model.obj : null),
   // room checks: load a room .glb, set which wall the tags are on and where, read its box in the tag frame
   loadRoom(url, name, units = "auto") { $("r-units").value = units; return loadRoom(url, name); },
   setRoom({ wall, along, height, nudge, seeThrough } = {}) {

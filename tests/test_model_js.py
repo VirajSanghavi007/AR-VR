@@ -31,7 +31,7 @@ POSE = {"name": "cabinet.glb", "units": "mm", "sizeRaw": [1200, 800, 450], "pct"
 
 
 def test_units_in_metres(node_available):
-    assert run("M.UNIT_M") == {"m": 1, "cm": 0.01, "mm": 0.001, "in": 0.0254}
+    assert run("M.UNIT_M") == {"m": 1, "cm": 0.01, "mm": 0.001, "in": 0.0254, "ft": 0.3048}
 
 
 def test_guess_units_millimetres_only_past_100(node_available):
@@ -50,8 +50,8 @@ def test_real_size_converts_and_rejects_unknown_units(node_available):
     assert run('M.realSize([120, 80, 45], "cm")') == pytest.approx([1.2, 0.8, 0.45])
     assert run('M.realSize([10, 1, 2], "in")') == pytest.approx([0.254, 0.0254, 0.0508])
     assert run('M.realSize([1, 2, 3], "m")') == [1, 2, 3]
-    with pytest.raises(RuntimeError, match='unknown units "ft"'):
-        run('M.realSize([1, 1, 1], "ft")')
+    with pytest.raises(RuntimeError, match='unknown units "yd"'):
+        run('M.realSize([1, 1, 1], "yd")')
 
 
 def test_fmt_size(node_available):
@@ -135,7 +135,7 @@ def test_parse_pose_round_trip(node_available):
     ('"{not json"', "not JSON"),
     ('{"version": 2}', "version 2"),
     ("null", "not a pose file"),
-    ('{"version": 1, "units": "ft", "position_m": [0, 0, 0]}', 'unknown units "ft"'),
+    ('{"version": 1, "units": "yd", "position_m": [0, 0, 0]}', 'unknown units "yd"'),
     ('{"version": 1, "units": "m"}', "no position"),
     ('{"version": 1, "units": "m", "position_m": [0, "a", 0]}', "no position"),
 ])
@@ -176,7 +176,7 @@ def test_page_wires_the_room_model():
     html = (PREVIEW / "tagar.html").read_text(encoding="utf8")
     for hook in ['id="r-file"', 'id="r-units"', 'id="r-sample"', 'id="r-wall"', 'id="r-along"', 'id="r-height"', 'id="r-info"',
                  'id="o-rctl"', 'id="o-ralong"', 'id="o-rup"', 'id="o-rwall"', 'id="o-rlook"',
-                 "wallYaw, nextWall, parseLen, roomOffset, roomCheck } from \"./model.js?v=2\"",
+                 "wallYaw, nextWall, parseLen, roomOffset, roomCheck,",
                  "yaw.rotation.y = wallYaw(roomPos.wall);", "mount.rotation.x = mountTurnX(true);",
                  "roomOffset(room.wallW, room.wallH, along, height, roomPos.nudge)", "roomRoot.visible = ok && modelWall();",
                  "if (roomRoot) { group.add(roomRoot); poseRoom(); }", "modelLine() + roomLine()",
@@ -239,3 +239,72 @@ def test_room_check(node_available):
     assert "3.05 m high" in run("M.roomCheck(4.6, 3.05, 1, -0.2)")[0]
     two = run("M.roomCheck(4.6, 3.05, NaN, NaN)")
     assert len(two) == 2 and "left corner" in two[0] and "above the floor" in two[1]
+
+
+# ---------- SketchUp exports (.dae, .obj + .mtl) and picking the model among several files ----------
+
+@pytest.mark.parametrize("name, want", [("roof.glb", "gltf"), ("Roof.GLTF", "gltf"), ("a.b.dae", "dae"), ("C:/x/Roof.OBJ", "obj"),
+                                        ("roof.mtl", None), ("tex.jpg", None), ("noext", None), ("", None)])
+def test_model_kind(name, want, node_available):
+    assert run(f"M.modelKind({json.dumps(name)})") == want
+
+
+def test_model_kind_explains_skp(node_available):
+    msg = run('(() => { try { M.modelKind("House.SKP"); return "no error"; } catch (e) { return e.message; } })()')
+    assert "COLLADA (.dae)" in msg and "File > Export > 3D Model" in msg
+
+
+def test_ext_of(node_available):
+    assert run('["a.DAE", "a.b.obj", "dir.x/file", "x", null].map(M.extOf)') == ["dae", "obj", "", "", ""]
+
+
+@pytest.mark.parametrize("names, main, kind", [
+    (["roof.mtl", "roof.obj", "tex.png"], 1, "obj"),
+    (["roof.obj", "roof.dae"], 1, "dae"),                       # .dae before .obj
+    (["roof.dae", "roof.glb", "roof.obj"], 1, "gltf"),          # glTF first
+    (["roof.gltf", "roof.bin", "a.png"], 0, "gltf"),
+])
+def test_pick_model_files(names, main, kind, node_available):
+    r = run(f"M.pickModelFiles({json.dumps(names)})")
+    assert r == {"main": main, "kind": kind, "extras": [i for i in range(len(names)) if i != main]}
+
+
+def test_pick_model_files_needs_a_model(node_available):
+    msg = run('(() => { try { M.pickModelFiles(["a.mtl", "b.jpg"]); return "no error"; } catch (e) { return e.message; } })()')
+    assert msg.startswith("no model among these files")
+
+
+def test_base_name(node_available):
+    names = ["Textures/Roof.JPG", "C:\\x\\a.mtl", "blob:http://h/abc", "a%20b.png?v=1#x", "%E0%A4"]
+    got = run(f"{json.dumps(names)}.map(M.baseName)")
+    assert got == ["roof.jpg", "a.mtl", "abc", "a b.png", "%e0%a4"]
+
+
+@pytest.mark.parametrize("head, want", [
+    ("# Alias OBJ Model File\n# Exported from SketchUp\n# File units = inches\nv 0 0 0", "in"),
+    ("#File units=meters", "m"), ("# file units = Millimeters", "mm"), ("# File units = centimeters", "cm"),
+    ("# File units = feet", "ft"), ("# File units = parsecs", None), ("v 0 0 0", None),
+    ("v 0 0 0\n" * 400 + "# File units = inches", None),      # only the header counts
+])
+def test_obj_file_units(head, want, node_available):
+    assert run(f"M.objFileUnits({json.dumps(head)})") == want
+
+
+def test_file_units(node_available):
+    got = run('[M.fileUnits("dae"), M.fileUnits("dae", "in"), M.fileUnits("obj", "in"), M.fileUnits("obj"), M.fileUnits("gltf", "m")]')
+    assert got == ["m", "m", "in", None, None]
+
+
+def test_page_wires_sketchup_files():
+    # smoke: both pickers take several files including .dae/.obj/.mtl, the loaders are imported and used
+    html = (PREVIEW / "tagar.html").read_text(encoding="utf8")
+    assert html.count('accept=".glb,.gltf,.dae,.obj,.mtl,.bin,.png,.jpg,.jpeg,.webp,.skp" multiple') == 2
+    for hook in ['import { ColladaLoader } from "three/addons/loaders/ColladaLoader.js";',
+                 'import { OBJLoader } from "three/addons/loaders/OBJLoader.js";',
+                 'import { MTLLoader } from "three/addons/loaders/MTLLoader.js";',
+                 'modelKind, pickModelFiles, baseName, objFileUnits, fileUnits } from "./model.js?v=3";',
+                 "mgr.setURLModifier((u) => side[baseName(u)] || u);", "m.side = THREE.DoubleSide;",
+                 "return readModel(url, name, side).then(", "pickedModel($(\"m-file\").files)", "pickedModel($(\"r-file\").files)",
+                 "model.fileUnits || guessUnits(", "room.fileUnits || guessUnits(", 'id="m-sketchup"', '<option value="ft">feet</option>']:
+        assert hook in html, hook
+    assert (PREVIEW / "models" / "sample_sketchup_pergola.dae").is_file()

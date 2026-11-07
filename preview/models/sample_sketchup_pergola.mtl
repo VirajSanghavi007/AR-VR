@@ -1,0 +1,15 @@
+newmtl Wood_Cedar
+Kd 0.55 0.36 0.2
+Ka 0 0 0
+d 1
+
+newmtl Aluminium
+Kd 0.78 0.8 0.83
+Ka 0 0 0
+d 1
+
+newmtl Solar_Glass
+Kd 0.06 0.1 0.22
+Ka 0 0 0
+d 1
+
