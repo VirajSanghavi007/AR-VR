@@ -119,7 +119,7 @@ def test_clamp_and_yaw_deg(node_available):
 
 def test_page_uses_one_panel_not_the_grid():
     html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
-    assert "GLTFLoader" not in html and "terrace_tilted_ar.glb" not in html
+    assert "terrace_tilted_ar.glb" not in html                   # GLTFLoader is only for the designer's model now
     for hook in ("TextureLoader", "look.texture", "buildPanel", "panelTexture", "cellLayout", "isLongPress", "twistDelta", 'id="o-look"', 'id="looks"'):
         assert hook in html, hook
 
@@ -306,7 +306,7 @@ def test_pattern_smoke_builds_a_clean_grid(node_available):
 
 def test_page_wires_the_panel_array_and_power():
     html = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
-    for hook in ('id="rows"', 'id="cols"', 'id="o-rows"', 'id="o-cols"', 'id="o-grid"', 'id="sun"', '["o-grid", "o-minus",',
+    for hook in ('id="rows"', 'id="cols"', 'id="o-rows"', 'id="o-cols"', 'id="o-grid"', 'id="sun"', '"o-msave", "o-grid", "o-minus",',
                  'const gridSize = () => [clampCount($("rows").value, 1), clampCount($("cols").value, 1)];',
                  "panels = turnArray(gridLayout(r, c, l.w, l.d), yaw);",
                  '[["rows", "o-rows"], ["cols", "o-cols"]]', "$(a).oninput = () => { $(b).value = $(a).value; regrid(); };",

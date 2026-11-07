@@ -77,6 +77,12 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
 #shot .row2 .primary { background: #1f9d55; }
 #touch { position: absolute; inset: 0; pointer-events: auto; touch-action: none; }
 .seg.looks { grid-template-columns: 1fr 1fr; }
+.bar .grid input[type=range] { padding: 0; border: 0; background: none; accent-color: #1f9d55; }
+.bar .grid output { font: 600 .9rem var(--mono); min-width: 3.6em; text-align: right; }
+.bar button[aria-pressed="true"] { background: #1f9d55; }
+label.f select { font: 500 1rem var(--sans); padding: 8px; border: 1px solid var(--line); border-radius: 8px;
+                 background: var(--bg); color: var(--fg); }
+label.f input[type=file] { font: .85rem var(--sans); padding: 6px; }
 .swatch { display: inline-block; width: .8em; height: .8em; border-radius: 2px; margin-right: 6px; vertical-align: -1px; border: 2px solid; }
 </style>
 </head>
@@ -112,6 +118,21 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
   </div>
 
   <div class="card">
+    <p class="label">Designer's model (optional)</p>
+    <p class="note">A <b>.glb</b> from the design team, ideally in metres (.fbx, .dwg, .rvt or .skp: convert to .glb first, e.g. in Blender).
+      Once the tags lock, press <b>Place model</b> and tap the wall or floor where it goes; <b>Turn</b> and <b>Scale</b> adjust it,
+      <b>1 m bar</b> lays a 1 m striped bar (10 cm stripes) beside it to check against a tape measure, <b>Save pose</b> downloads where it is.</p>
+    <div class="row">
+      <label class="f">Model file (.glb)<input id="m-file" type="file" accept=".glb,model/gltf-binary"></label>
+      <label class="f">Model units<select id="m-units">
+        <option value="auto">Auto (guess)</option><option value="m">metres</option><option value="cm">centimetres</option>
+        <option value="mm">millimetres</option><option value="in">inches</option></select></label>
+      <label class="f">Saved pose (.json)<input id="m-pose" type="file" accept=".json,application/json"></label>
+    </div>
+    <p class="note" id="m-info">No model loaded.</p>
+  </div>
+
+  <div class="card">
     <button class="go" id="start" disabled>Start AR</button>
     <p class="note" id="status">Checking whether this device supports AR…</p>
   </div>
@@ -125,6 +146,13 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
       <label>Rows<input id="o-rows" type="number" inputmode="numeric" min="1" max="10" step="1" value="1"></label>
       <label>Columns<input id="o-cols" type="number" inputmode="numeric" min="1" max="10" step="1" value="1"></label>
     </div>
+    <div class="grid" id="o-mctl" hidden>
+      <label>Turn<input id="o-mturn" type="range" min="0" max="359" step="1" value="0"><output id="o-mturn-v">0°</output></label>
+      <label>Scale<input id="o-mscale" type="range" min="10" max="300" step="1" value="100"><output id="o-mscale-v">100%</output></label>
+    </div>
+    <button id="o-mplace" hidden aria-pressed="false">Place model</button>
+    <button id="o-mbar" hidden aria-pressed="false">1 m bar</button>
+    <button id="o-msave" hidden>Save pose</button>
     <button id="o-minus" class="big" hidden aria-label="Smaller model">−</button>
     <button id="o-fit" hidden>Fit</button>
     <button id="o-plus" class="big" hidden aria-label="Bigger model">+</button>
@@ -158,6 +186,9 @@ import { PANEL_LOOKS, lookByKey, nextLook, cellLayout, panelHit, twistDelta, isL
          energy, mountParts, turnArray, cellShade, chamferCell, smoothLight,
          contactShadow, contactAlpha, grainFor, cameraLookShader, lightProbeOptions } from "./panel.js?v=9";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { UNIT_M, guessUnits, realSize, fmtSize, seat, mountTurnX, clampPct, clampDeg, rulerTicks, rulerStart,
+         poseFileName, poseRecord, parsePose, sameTags } from "./model.js?v=1";
 import { composite, caption, shotName } from "./snap.js?v=2";
 
 const DETECT_EVERY_MS = 250, FOLLOW_EVERY_MS = 400, HIT_GRACE_MS = 500, MAX_ANGLE_ERR = 12, EDGE_WARN = 0.15;
@@ -495,6 +526,8 @@ function place() {
   shadowCatcher.scale.set(2 * R, 1, 2 * R);
   shadowCatcher.position.y = 0.001;
   group.add(sun, sun.target, shadowCatcher);
+  if (model && modelRoot.userData.wall !== modelWall()) buildModel();
+  if (modelRoot) group.add(modelRoot);
   updatePanels();
   // outline of the tag rectangle itself, on the table
   const hw = rect.width / 2, hh = rect.height / 2;
@@ -521,14 +554,15 @@ function report() {
   const fit = Math.abs(scale - fitS) < 1e-9 ? " (auto fit)" : "";
   const edge = lastEdge ? ` · tag edge ${(lastEdge * 1000).toFixed(0)} mm (printed ${(tagSize * 1000).toFixed(0)})` : "";
   $("hud").innerHTML = `Scale ${scaleLabel(scale)}${fit}` +
-    panelLine() + `<small>tags ${(rect.width * 100).toFixed(1)} × ${(rect.height * 100).toFixed(1)} cm · panels shown ${cm(design.w)} × ${cm(design.d)} cm${edge}</small>` +
+    panelLine() + modelLine() + `<small>tags ${(rect.width * 100).toFixed(1)} × ${(rect.height * 100).toFixed(1)} cm · panels shown ${cm(design.w)} × ${cm(design.d)} cm${edge}</small>` +
     (Math.abs(lastEdge - tagSize) / tagSize > EDGE_WARN
       ? `<small style="color:#ffb86b">The tags measure off from the printed size: the ring was probably not on the table. Press Find tags again with the ring between the tags.</small>` : "");
 }
 
-const BUTTONS = ["o-grid", "o-minus", "o-fit", "o-plus", "o-look", "o-pturn", "o-turn", "o-shot", "o-relock"];
+const BUTTONS = ["o-mctl", "o-mplace", "o-mbar", "o-msave", "o-grid", "o-minus", "o-fit", "o-plus", "o-look", "o-pturn", "o-turn", "o-shot", "o-relock"];
+const MODEL_BUTTONS = ["o-mctl", "o-mplace", "o-mbar", "o-msave"];
 function setButtons(locked) {
-  BUTTONS.forEach((id) => { $(id).hidden = !locked; });
+  BUTTONS.forEach((id) => { $(id).hidden = !locked || (MODEL_BUTTONS.includes(id) && !model); });
 }
 
 // ---------- photo: camera image + the panel, rendered again off screen at the camera's size ----------
@@ -818,17 +852,195 @@ for (const [a, b] of [["rows", "o-rows"], ["cols", "o-cols"]]) {
 }
 regrid();
 
+// ---------- the designer's CAD model ----------
+// Shown at its real size (times the Scale slider) in the tag rectangle's frame, never at the panels' scale:
+// modelRoot (in group) holds g (position x, 0, z; turn about the surface normal; scale) and the 1 m bar.
+// Inside g: seat offset -> mount (on a wall: up goes up the wall) -> metres per unit -> the glTF scene.
+let model = null, modelRoot = null, placing = false, showBar = false;
+let modelPose = { x: 0, z: 0, deg: 0, pct: 100, placed: false };
+const modelWall = () => !!(rect && onWall(rect.n));
+const modelUnits = () => ($("m-units").value === "auto" ? guessUnits(Math.max(...model.sizeRaw)) : $("m-units").value);
+const UNIT_NAMES = { m: "metres", cm: "centimetres", mm: "millimetres", in: "inches" };
+
+function loadModel(url, name) {
+  $("m-info").textContent = `Loading ${name}…`;
+  return new Promise((resolve) => {
+    new GLTFLoader().load(url, (gltf) => {
+      const obj = gltf.scene;
+      obj.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+      const sizeRaw = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3()).toArray();
+      try { guessUnits(Math.max(...sizeRaw)); } catch (e) { $("m-info").textContent = `${name}: ${e.message}`; resolve(null); return; }
+      model = { name, obj, sizeRaw };
+      modelPose.placed = false;
+      buildModel();
+      describeModel();
+      if (rect) { setButtons(true); place(); }
+      resolve(modelState());
+    }, undefined, (e) => { $("m-info").textContent = `Could not load ${name}: ${e.message || e}`; resolve(null); });
+  });
+}
+
+function describeModel() {
+  if (!model) return;
+  const u = modelUnits(), auto = $("m-units").value === "auto";
+  $("m-info").innerHTML = `<b>${model.name}</b>: ${fmtSize(realSize(model.sizeRaw, u))} (width × height × depth), read as ${UNIT_NAMES[u]}` +
+    `${auto ? " (a guess: pick the units above if this size is wrong)" : ""}. In the file: ${model.sizeRaw.map((v) => +v.toPrecision(4)).join(" × ")} units.` +
+    " Check these against the design drawings before placing it.";
+}
+
+// 1 m bar: ten 10 cm stripes, dark and yellow, 3 cm wide, lying on the surface along x from 0 to 1 m.
+function ruler() {
+  const bar = new THREE.Group(), dark = new THREE.MeshStandardMaterial({ color: 0x1b1f24, roughness: 0.6 }),
+        light = new THREE.MeshStandardMaterial({ color: 0xf2c230, roughness: 0.6 });
+  for (const t of rulerTicks()) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(t.to - t.from, 0.01, 0.03), t.dark ? dark : light);
+    m.position.set((t.from + t.to) / 2, 0.005, 0);
+    bar.add(m);
+  }
+  return bar;
+}
+
+// (Re)build the model's groups: on load, a units change, or the tags locking on a wall instead of a table.
+function buildModel() {
+  if (!model) return;
+  const units = new THREE.Group(), mount = new THREE.Group(), seatG = new THREE.Group(), g = new THREE.Group(), wall = modelWall();
+  units.scale.setScalar(UNIT_M[modelUnits()]);
+  units.add(model.obj);
+  mount.rotation.x = mountTurnX(wall);
+  mount.add(units);
+  const tmp = new THREE.Group();                               // identity parent: the box comes out in the mount's frame
+  tmp.add(mount); tmp.updateMatrixWorld(true);
+  const b = new THREE.Box3().setFromObject(mount), off = seat(b.min.toArray(), b.max.toArray());
+  seatG.position.fromArray(off);
+  seatG.add(mount);
+  g.add(seatG);
+  g.matrixAutoUpdate = true;
+  model.seated = b.clone().translate(new THREE.Vector3(...off));
+  if (modelRoot) modelRoot.removeFromParent();
+  modelRoot = new THREE.Group();
+  modelRoot.add(g);
+  const bar = ruler();
+  modelRoot.add(bar);
+  modelRoot.userData = { g, bar, wall };
+  if (rect) group.add(modelRoot);
+  poseModel();
+}
+
+function poseModel() {
+  if (!modelRoot) return;
+  const { g, bar } = modelRoot.userData;
+  g.position.set(modelPose.x, 0, modelPose.z);
+  g.rotation.y = (clampDeg(modelPose.deg) * Math.PI) / 180;
+  g.scale.setScalar(clampPct(modelPose.pct) / 100);
+  g.visible = modelPose.placed;
+  g.updateMatrix();
+  const box = model.seated.clone().applyMatrix4(g.matrix), [bx, bz] = rulerStart(box.min.toArray(), box.max.toArray());
+  bar.position.set(bx, 0, bz);
+  bar.visible = showBar && modelPose.placed;
+  $("o-mturn").value = clampDeg(modelPose.deg); $("o-mturn-v").textContent = `${clampDeg(modelPose.deg)}°`;
+  $("o-mscale").value = clampPct(modelPose.pct); $("o-mscale-v").textContent = `${clampPct(modelPose.pct)}%`;
+  $("o-mplace").setAttribute("aria-pressed", String(placing));
+  $("o-mbar").setAttribute("aria-pressed", String(showBar));
+  $("o-msave").disabled = !modelPose.placed;
+  if (rect) report();
+}
+
+function placeModel(p) {
+  if (!model || !p) return;
+  [modelPose.x, modelPose.z] = p;
+  modelPose.placed = true;
+  placing = false;
+  poseModel();
+}
+
+const shownSize = () => realSize(model.sizeRaw, modelUnits()).map((v) => (v * clampPct(modelPose.pct)) / 100);
+function modelLine() {
+  if (!model) return "";
+  const u = modelUnits(), pct = clampPct(modelPose.pct), p = modelPose;
+  const where = p.placed ? `, turned ${clampDeg(p.deg)}°, ${p.x.toFixed(2)} m, ${p.z.toFixed(2)} m from the tags' centre` : "";
+  const how = placing ? "tap the wall or floor where it goes" : p.placed ? (showBar ? "1 m bar beside it: check it with a tape" : "")
+                                                                         : "press Place model, then tap where it goes";
+  return `<small style="color:#ffd27f">Model ${model.name}: ${fmtSize(shownSize())} shown (${pct}% of as drawn, ${u})${where}` +
+    `${how ? ` · ${how}` : ""}</small>`;
+}
+
+// Pose file: the room-frame position, turn and scale, named after the model with its shown size in mm.
+function savePose() {
+  if (!model || !rect || !modelPose.placed) return null;
+  const rec = poseRecord({ name: model.name, units: modelUnits(), sizeRaw: model.sizeRaw, pct: modelPose.pct, deg: modelPose.deg,
+                           x: modelPose.x, z: modelPose.z, wall: modelWall(),
+                           tags: { ids: rect.ids || "", width: rect.width, height: rect.height } });
+  const name = poseFileName(model.name, shownSize());
+  const url = URL.createObjectURL(new Blob([JSON.stringify(rec, null, 1)], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  return { name, record: rec };
+}
+
+// A saved pose: back where it was, if the same tags are locked (other tags = another frame: say so).
+function usePose(src) {
+  let p;
+  try { p = parsePose(src); } catch (e) { $("m-info").textContent = `Pose file: ${e.message}`; return null; }
+  const unitsBefore = model ? modelUnits() : null;
+  $("m-units").value = p.units;
+  Object.assign(modelPose, { x: p.x, z: p.z, deg: p.deg, pct: p.pct, placed: true });
+  const notes = [];
+  if (model && p.name !== model.name) notes.push(`it was saved for ${p.name}, not ${model.name}`);
+  if (rect && !sameTags(p.ids, rect.ids || "")) notes.push(`it was saved on tags ${p.ids}, these are ${rect.ids || "other tags"}`);
+  if (model) { if (unitsBefore !== p.units) buildModel(); else poseModel(); describeModel(); }
+  $("m-info").innerHTML = (model ? $("m-info").innerHTML + "<br>" : "") +
+    `Pose loaded: ${p.x.toFixed(2)} m, ${p.z.toFixed(2)} m, turned ${p.deg}°, ${p.pct}%` + (notes.length ? ` (careful: ${notes.join("; ")})` : "") + ".";
+  return { ...p, notes };
+}
+
+function modelState() {
+  if (!model) return { loaded: false };
+  const st = { loaded: true, name: model.name, units: modelUnits(), sizeRaw: model.sizeRaw, sizeM: realSize(model.sizeRaw, modelUnits()),
+               pose: { ...modelPose }, placing, bar: showBar, wall: modelWall(), inScene: !!(modelRoot && modelRoot.parent) };
+  if (modelRoot) {
+    const { g, bar } = modelRoot.userData, box = model.seated.clone().applyMatrix4(g.matrix);
+    st.roomBox = { min: box.min.toArray(), max: box.max.toArray() };
+    st.barAt = [bar.position.x, bar.position.z];
+    st.barVisible = bar.visible;
+  }
+  return st;
+}
+
+$("m-file").onchange = () => {
+  const f = $("m-file").files[0];
+  if (f) loadModel(URL.createObjectURL(f), f.name);
+};
+$("m-units").onchange = () => { if (model) { buildModel(); describeModel(); } };
+$("m-pose").onchange = async () => { const f = $("m-pose").files[0]; if (f) usePose(await f.text()); };
+$("o-mplace").onclick = () => { placing = !placing; poseModel(); };
+$("o-mbar").onclick = () => { showBar = !showBar; poseModel(); };
+$("o-msave").onclick = () => savePose();
+$("o-mturn").oninput = () => { modelPose.deg = clampDeg($("o-mturn").value); poseModel(); };
+$("o-mscale").oninput = () => { modelPose.pct = clampPct($("o-mscale").value); poseModel(); };
+
 // ---------- touching the panel ----------
 // Screen point -> roof point [x, z] in roof metres, through the current camera onto the locked table plane.
-function roofPoint(cx, cy) {
-  if (!rect || !inner) return null;
+function surfaceHit(cx, cy) {
+  if (!rect) return null;
   const proj = simulated ? camera.projectionMatrix.elements : lastProj, pose = simulated ? camera.matrixWorld.elements : lastPose;
   if (!proj || !pose) return null;
   group.updateMatrixWorld(true);
   const m = group.matrixWorld.elements, n = [m[4], m[5], m[6]], p0 = [m[12], m[13], m[14]];
   const hit = rayPlane(pixelRay(cx, cy, innerWidth, innerHeight, Array.from(proj), Array.from(pose)), p0, n);
+  return hit ? new THREE.Vector3(...hit) : null;
+}
+function roofPoint(cx, cy) {
+  const hit = inner && surfaceHit(cx, cy);
   if (!hit) return null;
-  const local = inner.worldToLocal(new THREE.Vector3(...hit));
+  const local = inner.worldToLocal(hit);
+  return [local.x, local.z];
+}
+// Screen point -> room point [x, z] in metres on the tag rectangle's surface (the model's frame).
+function surfacePoint(cx, cy) {
+  const hit = surfaceHit(cx, cy);
+  if (!hit) return null;
+  const local = group.worldToLocal(hit);
   return [local.x, local.z];
 }
 
@@ -849,6 +1061,7 @@ $("touch").addEventListener("pointerdown", (e) => {
                              roof: roofPoint(e.clientX, e.clientY) });
   clearTimeout(pressTimer);
   if (touches.size === 1) {
+    if (placing) return;                                       // no panel drag while placing the model
     pressTimer = setTimeout(() => {
       const t = touches.get(e.pointerId);
       if (!t || !isLongPress(t.at, performance.now(), Math.hypot(t.x - t.x0, t.y - t.y0))) return;
@@ -888,7 +1101,8 @@ function release(e) {
   if (!t) return;
   const tap = performance.now() - t.at < 300 && Math.hypot(t.x - t.x0, t.y - t.y0) < 12;
   if (touches.size === 0) {
-    if (tap && !grabbed) sel = panelAt(t.roof);                 // a tap picks a panel, a tap off them lets go
+    if (tap && placing) placeModel(surfacePoint(t.x, t.y));      // Place model: the tap says where it goes
+    else if (tap && !grabbed) sel = panelAt(t.roof);            // a tap picks a panel, a tap off them lets go
     grabbed = false;
     updatePanels();
   } else if (grabbed) {
@@ -928,6 +1142,21 @@ window.__tagar = {
     return [((v.x + 1) / 2) * innerWidth, ((1 - v.y) / 2) * innerHeight];
   },
   roofAt(x, y) { return roofPoint(x, y); },
+  // CAD model checks: load a .glb by URL, put it at a room point [x, z], set turn/scale, read it back.
+  loadModel(url, name, units = "auto") { $("m-units").value = units; return loadModel(url, name); },
+  placeModel(p) { placeModel(p); return this.modelState(); },
+  setModel({ deg, pct, bar } = {}) {
+    if (deg !== undefined) { $("o-mturn").value = deg; $("o-mturn").dispatchEvent(new Event("input")); }
+    if (pct !== undefined) { $("o-mscale").value = pct; $("o-mscale").dispatchEvent(new Event("input")); }
+    if (bar !== undefined && bar !== showBar) $("o-mbar").click();
+    return this.modelState();
+  },
+  savePose() { return savePose(); },
+  loadPose(obj) { return usePose(obj); },
+  modelState,
+  tapAt(x, y) { placing = true; placeModel(surfacePoint(x, y)); return this.modelState(); },
+  screenOfRoom(p) { scene.updateMatrixWorld(true); const v = group.localToWorld(new THREE.Vector3(p[0], 0, p[1])).project(camera);
+                    return [((v.x + 1) / 2) * innerWidth, ((1 - v.y) / 2) * innerHeight]; },
   // Phone emulator: emuStart resets like Start AR does; each emuRun step renders the tags from a
   // shaken virtual phone (tracking error trackMm, table normal off by normalDeg) and runs the
   // page's own detection tick on it. Returns every HUD message and the lock state.
