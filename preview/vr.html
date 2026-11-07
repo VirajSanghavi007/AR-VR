@@ -18,17 +18,30 @@ canvas { display:block; touch-action:none; }
 #bar.hide { display:none; }
 button { flex:1; padding:12px 6px; border:0; border-radius:8px; background:var(--accent); color:#fff; font:600 14px var(--sans); }
 button.alt { background:#2a3542; }
-#info { position:fixed; top:10px; left:16px; right:16px; font-size:13px; opacity:.9; pointer-events:none; text-shadow:0 1px 2px #000; }
-#msg { position:fixed; top:40px; left:16px; right:16px; font-size:13px; color:#ffd27a; pointer-events:none; }
+#phases { position:fixed; top:10px; left:16px; display:flex; gap:6px; z-index:2; }
+#phases a { padding:6px 12px; border-radius:16px; background:rgba(14,20,27,.7); color:var(--fg); font:600 13px var(--sans); text-decoration:none; }
+#phases a.on { background:var(--accent); }
+#arbar { position:fixed; left:0; right:0; bottom:0; display:none; gap:8px; padding:10px 16px calc(10px + env(safe-area-inset-bottom)); }
+#arbar.show { display:flex; }
+#info { position:fixed; top:48px; left:16px; max-width:calc(100% - 56px); padding:6px 10px; border-radius:8px; background:rgba(14,20,27,.62); font-size:13px; line-height:1.35; pointer-events:none; }
+#info:empty { display:none; }
+#msg { position:fixed; top:84px; left:16px; right:16px; font-size:13px; color:#ffd27a; pointer-events:none; }
 </style>
 </head>
 <body>
+<nav id="phases"><a id="p2" href="?phase=2">Phase 2: AutoCAD roof</a><a id="p3" href="?phase=3">Phase 3: scanned roof</a></nav>
 <div id="info">Loading roof model...</div>
 <div id="msg"></div>
 <div id="bar">
   <button id="bOrbit" class="alt">Orbit</button>
   <button id="bVR">VR (Cardboard)</button>
-  <button id="bAR" class="alt">AR on table</button>
+  <button id="bAR" class="alt">AR</button>
+  <button id="bScan" class="alt" hidden aria-pressed="true">LiDAR scan</button>
+</div>
+<div id="arbar">
+  <button id="bArSize" class="alt">Full size</button>
+  <button id="bArMove" class="alt">Move</button>
+  <button id="bArExit">Exit AR</button>
 </div>
 <script type="module">
 import * as THREE from "three";
@@ -36,8 +49,18 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { StereoEffect } from "three/addons/effects/StereoEffect.js";
 import { Sky } from "three/addons/objects/Sky.js";
+import { PLYLoader } from "three/addons/loaders/PLYLoader.js";
 
 const $ = (id) => document.getElementById(id);
+// Phase 2: panels laid out on an existing AutoCAD roof. Phase 3: no drawing, the roof CAD is made from a scan
+// (ETH3D terrace laser scan standing in for drone LiDAR, scripts/phase3_preview.py). Same viewer: Orbit, VR, AR.
+const PHASES = {
+  2: { glb: "models/rooftop_solar.glb", json: "models/rooftop_solar.json", centre: [6, 0.15, -4], ground: -9 },
+  3: { glb: "models/phase3_terrace.glb", json: "models/phase3_terrace.json", centre: [1.2, 0, 1.06], ground: -0.25 },
+};
+const PHASE = new URLSearchParams(location.search).get("phase") === "3" ? 3 : 2;
+const CFG = PHASES[PHASE];
+$("p" + PHASE).classList.add("on");
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
@@ -62,11 +85,17 @@ scene.environment = pmrem.fromScene(scene, 0, 0.1, 10000).texture;      // sky o
 scene.fog = new THREE.Fog(0xc4d6e6, 90, 420);
 
 const sun = new THREE.DirectionalLight(0xfff0d8, 3.2);
-sun.position.copy(SUN_DIR).multiplyScalar(70).add(new THREE.Vector3(6, 0, -4));
-sun.target.position.set(6, 0, -4);
 sun.castShadow = true;
 sun.shadow.mapSize.set(4096, 4096);
-Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 32, bottom: -32, near: 10, far: 160 });
+// Sun and its shadow box follow the model: centred on c (world), shrunk with the model in table-size AR.
+function aimSun(c, scale = 1) {
+  sun.target.position.copy(c);
+  sun.position.copy(SUN_DIR).multiplyScalar(70 * scale).add(c);
+  const r = 32 * scale;
+  Object.assign(sun.shadow.camera, { left: -r, right: r, top: r, bottom: -r, near: 10 * scale, far: 160 * scale });
+  sun.shadow.camera.updateProjectionMatrix();
+}
+aimSun(new THREE.Vector3(CFG.centre[0], 0, CFG.centre[2]));
 sun.shadow.bias = -0.0002; sun.shadow.normalBias = 0.04;
 scene.add(sun, sun.target, new THREE.HemisphereLight(0xe8eef4, 0x6b7a5a, 0.35));
 
@@ -153,7 +182,7 @@ function buildBody(cells) {
   add(new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.4, 0.08), M.door), 6, GROUND_Y + 1.2, 0.04);
   add(new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.12, 1.2), M.stucco), 6, GROUND_Y + 2.7, 0.6);   // porch canopy
 }
-fetch("models/rooftop_solar.json").then((r) => r.json()).then((j) => j.cells)
+if (PHASE === 2) fetch(CFG.json).then((r) => r.json()).then((j) => j.cells)
   .catch(() => [[0, 0, 12, 8]]).then(buildBody);
 const ground = add(new THREE.Mesh(new THREE.PlaneGeometry(900, 900), M.grass), 6, GROUND_Y, -4);
 ground.rotation.x = -Math.PI / 2; ground.castShadow = false;
@@ -176,10 +205,21 @@ function tree(x, z, h) {
 [[-22, -4, 10, 8, 14], [34, -6, 12, 10, 9], [6, -34, 16, 9, 12], [6, 30, 14, 9, 7]]
   .forEach(([x, z, w, d, h]) => add(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), M.stucco), x, GROUND_Y + h / 2, z));
 
-const world = new THREE.Group();           // the roof model
+// Phase 3: the scan already holds the walls around the terrace, so only a paved floor under it.
+if (PHASE === 3) {
+  surround.visible = false;
+  const tex = grassTex.clone(); tex.repeat.set(60, 60); tex.needsUpdate = true;
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ map: tex, roughness: 1 }));
+  floor.rotation.x = -Math.PI / 2; floor.position.y = CFG.ground; floor.receiveShadow = true;
+  scene.add(floor);
+  scene.userData.floor = floor;
+}
+
+const world = new THREE.Group();           // the roof model (+ the scan in Phase 3)
 scene.add(world);
-const CENTRE = new THREE.Vector3(6, 0.15, -4);
-const ORBIT_POS = new THREE.Vector3(-6, 9, 7);
+const CENTRE = new THREE.Vector3(...CFG.centre);
+const ORBIT_POS = CENTRE.clone().add(new THREE.Vector3(-12, 8.85, 11));
+const STAND = CENTRE.clone().add(new THREE.Vector3(-4, 1.6, 0));   // VR: standing on the roof
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 8000);
 camera.position.copy(ORBIT_POS);
 const orbit = new OrbitControls(camera, renderer.domElement);
@@ -202,7 +242,7 @@ function dress(geo) {
   g.setAttribute("color", new THREE.BufferAttribute(col, 3));
   return g;
 }
-new GLTFLoader().load("models/rooftop_solar.glb", (gltf) => {
+new GLTFLoader().load(CFG.glb, (gltf) => {
   let panels = 0;
   gltf.scene.traverse((o) => { o.castShadow = o.receiveShadow = true; });
   world.add(gltf.scene);
@@ -220,8 +260,38 @@ new GLTFLoader().load("models/rooftop_solar.glb", (gltf) => {
       o.geometry = dress(o.geometry); o.material = M.roof;
     }
   });
-  $("info").textContent = `L-shaped rooftop with stair room, store and water tanks, ${panels} solar panels. Drag to orbit, pinch to zoom.`;
-}, undefined, () => { $("info").textContent = "Could not load models/rooftop_solar.glb"; });
+  world.userData.panels = panels;
+  if (PHASE === 2) $("info").textContent = `Phase 2, from an AutoCAD drawing: L-shaped rooftop with stair room, store and water tanks, ${panels} solar panels. Drag to orbit, pinch to zoom.`;
+  else fetch(CFG.json).then((r) => r.json()).then((j) => {
+    $("info").textContent = `Phase 3, no drawing: roof CAD made from a laser scan (ETH3D terrace, standing in for drone LiDAR), ` +
+      `${j.outline_area_m2} m², ${panels} panels, ${j.kwp} kWp. Drag to orbit, pinch to zoom.`;
+    if (j.scan) loadScan("models/" + j.scan);
+  });
+}, undefined, () => { $("info").textContent = `Could not load ${CFG.glb}`; });
+
+// Phase 3 LiDAR layer: the scan as coloured points, in the same frame as the roof CAD.
+const scanMat = new THREE.PointsMaterial({ size: 0.035, vertexColors: true, sizeAttenuation: true });
+// LiDAR-viewer colouring by height above the roof: blue at roof level through green to red at 12 m.
+function heightColour(y, top = 12) { return new THREE.Color().setHSL(0.66 * (1 - Math.min(Math.max(y / top, 0), 1)), 0.85, 0.55); }
+let scanPts = null;
+function loadScan(url) {
+  new PLYLoader().load(url, (geo) => {
+    const pos = geo.attributes.position, col = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) heightColour(pos.getY(i)).toArray(col, 3 * i);
+    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    scanPts = new THREE.Points(geo, scanMat);
+    scanPts.name = "scan";
+    world.add(scanPts);
+    $("bScan").hidden = false;
+  });
+}
+function showScan(on) {
+  if (!scanPts) return;
+  scanPts.visible = on;
+  $("bScan").setAttribute("aria-pressed", String(on));
+  $("bScan").textContent = on ? "LiDAR scan" : "Scan hidden";
+}
+$("bScan").onclick = () => showScan(!(scanPts && scanPts.visible));
 
 let mode = "orbit";
 const stereo = new StereoEffect(renderer);
@@ -248,7 +318,7 @@ async function startVR() {
   addEventListener("deviceorientation", onOrient);
   mode = "vr";
   orbit.enabled = false;
-  camera.position.set(2, 0.15 + 1.6, -4);          // standing on the roof
+  camera.position.copy(STAND);
   $("bar").classList.add("hide");
   $("info").textContent = "";
   $("msg").textContent = "";
@@ -276,7 +346,37 @@ renderer.domElement.addEventListener("touchstart", (e) => { if (mode === "vr" &&
 $("bOrbit").onclick = () => { if (mode === "vr") stopVR(); camera.position.copy(ORBIT_POS); orbit.target.copy(CENTRE); };
 $("bVR").onclick = startVR;
 
-// AR: a miniature of the roof on a real surface (WebXR immersive-ar with hit-test).
+// AR (WebXR immersive-ar with hit-test): put the design on a real surface, as a table-size model or at
+// full size (stand on the real roof, or any open floor, and walk among the panels). Tap to place, Move to re-place.
+const AR_TABLE = PHASE === 2 ? 0.04 : 0.03;           // Phase 2 12 m -> 48 cm, Phase 3 16.7 m -> 50 cm
+const ar = { scale: AR_TABLE, at: null, placed: false, session: null };
+// The roof centre (at roof level 0) lands on the tapped point p; everything shrinks by `scale`.
+function placeAt(p, scale) {
+  ar.at = new THREE.Vector3().fromArray(p); ar.scale = scale; ar.placed = true;
+  world.scale.setScalar(scale);
+  world.position.copy(ar.at).sub(new THREE.Vector3(CENTRE.x, 0, CENTRE.z).multiplyScalar(scale));
+  scanMat.size = Math.max(0.035 * scale, 0.003);
+  aimSun(ar.at, scale);
+  $("bArSize").textContent = scale === 1 ? "Table size" : "Full size";
+  return arState();
+}
+function arState() {
+  world.updateMatrixWorld(true);
+  const b = new THREE.Box3().setFromObject(world.children[0] || world);
+  return { scale: ar.scale, placed: ar.placed, at: ar.at && ar.at.toArray(),
+           centre: b.getCenter(new THREE.Vector3()).toArray(), size: b.getSize(new THREE.Vector3()).toArray() };
+}
+function toggleArSize() {
+  const next = ar.scale === 1 ? AR_TABLE : 1;
+  if (ar.placed) return placeAt(ar.at.toArray(), next);
+  ar.scale = next; $("bArSize").textContent = next === 1 ? "Table size" : "Full size";   // applies on the next tap
+  return arState();
+}
+$("arbar").addEventListener("beforexrselect", (e) => e.preventDefault());   // button taps are not placement taps
+$("bArSize").onclick = toggleArSize;
+$("bArMove").onclick = () => { ar.placed = false; $("info").textContent = "Point at the floor or a table, tap to place."; };
+$("bArExit").onclick = () => ar.session && ar.session.end();
+
 $("bAR").onclick = async () => {
   if (!navigator.xr || !(await navigator.xr.isSessionSupported("immersive-ar").catch(() => false))) {
     $("msg").textContent = "AR needs Chrome on an ARCore Android phone.";
@@ -284,38 +384,39 @@ $("bAR").onclick = async () => {
   }
   const session = await navigator.xr.requestSession("immersive-ar",
     { requiredFeatures: ["hit-test"], optionalFeatures: ["dom-overlay"], domOverlay: { root: document.body } });
+  ar.session = session;
   renderer.xr.enabled = true;
   await renderer.xr.setSession(session);
   scene.background = null; scene.fog = null; sky.visible = false; surround.visible = false;
-  const SCALE = 0.04;                                  // 12 m roof -> 48 cm model
-  world.scale.setScalar(SCALE);
-  world.position.set(0, -10, 0);
+  if (scene.userData.floor) scene.userData.floor.visible = false;
+  world.visible = false;                               // until the first tap
   const reticle = new THREE.Mesh(new THREE.RingGeometry(0.06, 0.08, 32).rotateX(-Math.PI / 2),
     new THREE.MeshBasicMaterial({ color: 0x2f6bff }));
   reticle.matrixAutoUpdate = false; reticle.visible = false; scene.add(reticle);
   const space = await session.requestReferenceSpace("viewer");
   const src = await session.requestHitTestSource({ space });
-  let placed = false;
-  session.addEventListener("select", () => {
-    if (!reticle.visible || placed) return;
-    placed = true;
+  const place = () => {
+    if (!reticle.visible || ar.placed) return;
     const p = new THREE.Vector3();
     reticle.matrix.decompose(p, new THREE.Quaternion(), new THREE.Vector3());
-    world.position.copy(p).sub(new THREE.Vector3(6, 0, -4).multiplyScalar(SCALE));
-    reticle.visible = false;
-    $("info").textContent = "";
-  });
+    placeAt(p.toArray(), ar.scale);
+    world.visible = true; reticle.visible = false;
+    $("info").textContent = ar.scale === 1 ? "Full size: walk around the panels." : "";
+  };
+  session.addEventListener("select", place);
   session.addEventListener("end", () => { location.reload(); });
   renderer.setAnimationLoop((t, frame) => {
-    if (frame && !placed) {
+    if (frame && !ar.placed) {
       const hit = frame.getHitTestResults(src)[0];
       reticle.visible = !!hit;
       if (hit) reticle.matrix.fromArray(hit.getPose(renderer.xr.getReferenceSpace()).transform.matrix);
     }
     renderer.render(scene, camera);
   });
+  ar.placed = false;
   $("bar").classList.add("hide");
-  $("info").textContent = "Point at a table or floor, tap to place the roof.";
+  $("arbar").classList.add("show");
+  $("info").textContent = "Point at the floor or a table, tap to place the roof.";
 };
 
 renderer.setAnimationLoop(() => {
@@ -332,7 +433,8 @@ addEventListener("resize", () => {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight); stereo.setSize(innerWidth, innerHeight);
 });
-window.__vr = { camera, orbit, scene, world };
+window.__vr = { heightColour, camera, orbit, scene, world, PHASE, CFG, CENTRE, STAND, AR_TABLE, placeAt, arState, toggleArSize, showScan,
+  scanCount: () => (scanPts ? scanPts.geometry.attributes.position.count : 0), startVR, stopVR, mode: () => mode };
 </script>
 </body>
 </html>
