@@ -290,6 +290,14 @@ const SUN = { color: [1, 1, 1], intensity: 1.8 }, SKY_PER_SUN = 1.5 / 1.8;
 let light = { ...SUN };
 let flipY = true, flipKnown = false, detector = null, lastEdge = 0, emuCamera = null, emu = null, emuR = null;
 
+// Desktop checks (simulate, emuStart): the canvas fills the window behind the overlay. Only the position
+// is set here; the CSS width/height come from setSize, so a high-DPI canvas (1.75x more pixels than CSS
+// pixels) is shown at window size and not at its pixel size, which would show only its top-left part.
+function fillScreen() {
+  Object.assign(renderer.domElement.style, { position: "fixed", inset: "0", zIndex: "0" });
+  renderer.setSize(innerWidth, innerHeight);
+}
+
 function buildScene() {
   renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(window.devicePixelRatio);
@@ -1278,8 +1286,7 @@ window.__tagar = {
     r.edge = edge;
     simulated = true;
     lock({}, r);
-    renderer.domElement.style.cssText = "position:fixed;inset:0;z-index:0";
-    renderer.setSize(innerWidth, innerHeight);
+    fillScreen();
     camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 50);
     camera.position.set(r.center[0], r.center[1] + 1.6, r.center[2] + 0.001);
     camera.up.set(0, 0, -1); camera.lookAt(...r.center);
@@ -1345,7 +1352,7 @@ window.__tagar = {
     flipKnown = false; flipY = true; lastHit = null;
     relock();
     $("overlay").classList.add("on");
-    renderer.domElement.style.cssText = "position:fixed;inset:0;z-index:0";
+    fillScreen();
     simulated = true;
     return this.state();
   },
