@@ -184,8 +184,13 @@ def test_page_wires_the_room_model():
                  "loadRoom(url, name, units", "setRoom({", "roomState,", "roomView(eye, at)"]:
         assert hook in html, hook
     # the sample room the card's button fetches is in the published models
-    url = html.split('loadRoom("', 1)[1].split("?", 1)[0]
-    assert (PREVIEW / url).is_file(), url
+    urls = [u.split("?", 1)[0] for u in html.split('loadRoom("')[1:]]
+    assert urls == ["models/sample_room.glb", "models/duplex_living_room.glb"], urls
+    for url in urls:
+        assert (PREVIEW / url).is_file(), url
+    # the real room button reads it as metres and the page credits its source (CC BY 4.0)
+    assert '$("r-duplex").onclick = () => { $("r-units").value = "m";' in html
+    assert 'id="r-duplex"' in html and "buildingSMART International" in html and "CC BY 4.0" in html
 
 
 # ---------- room model alignment ----------

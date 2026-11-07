@@ -144,6 +144,7 @@ label.f input[type=file] { font: .85rem var(--sans); padding: 6px; }
         <option value="auto">Auto (guess)</option><option value="m">metres</option><option value="cm">centimetres</option>
         <option value="mm">millimetres</option><option value="in">inches</option></select></label>
       <button id="r-sample" type="button">Use the sample room</button>
+      <button id="r-duplex" type="button">Use a real room (duplex living room)</button>
     </div>
     <div class="row">
       <label class="f">Tags are on the model's<select id="r-wall">
@@ -153,6 +154,9 @@ label.f input[type=file] { font: .85rem var(--sans); padding: 6px; }
       <label class="f">Tags' centre above the floor (m)<input id="r-height" type="text" inputmode="decimal" placeholder="e.g. 1.10"></label>
     </div>
     <p class="note" id="r-info">No room loaded.</p>
+    <p class="note">The real room is the living room (A102, 5.78 × 4.78 m, 2.58 m high; door and glass wall on its front) cut out of
+      <a href="https://github.com/buildingsmart-community/Community-Sample-Test-Files">BSI (2020) "Duplex Apartment Test Files," buildingSMART International</a>,
+      CC BY 4.0; changed: one room clipped out and converted from IFC to GLB.</p>
   </div>
 
   <div class="card">
@@ -1159,6 +1163,7 @@ function roomState() {
 
 $("r-file").onchange = () => { const f = $("r-file").files[0]; if (f) loadRoom(URL.createObjectURL(f), f.name); };
 $("r-sample").onclick = () => loadRoom("models/sample_room.glb?v=1", "sample_room.glb");
+$("r-duplex").onclick = () => { $("r-units").value = "m"; loadRoom("models/duplex_living_room.glb?v=1", "duplex_living_room.glb"); };
 $("r-units").onchange = () => { if (room) { buildRoom(); describeRoom(); } };
 $("r-wall").onchange = () => { roomPos.wall = $("r-wall").value; if (room) { buildRoom(); describeRoom(); } };
 $("r-along").oninput = $("r-height").oninput = () => poseRoom();
