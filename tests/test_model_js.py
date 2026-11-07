@@ -168,3 +168,69 @@ def test_page_wires_the_cad_model():
                  "loadModel(", "placeModel(", "modelState(",
                  "if (tap && placing) placeModel(surfacePoint(t.x, t.y));", "if (placing) return;"]:
         assert hook in html, hook
+
+
+
+def test_page_wires_the_room_model():
+    # smoke: tagar.html has the room card, AR controls, the wiring into place()/report()/buttons and the debug hooks
+    html = (PREVIEW / "tagar.html").read_text(encoding="utf8")
+    for hook in ['id="r-file"', 'id="r-units"', 'id="r-sample"', 'id="r-wall"', 'id="r-along"', 'id="r-height"', 'id="r-info"',
+                 'id="o-rctl"', 'id="o-ralong"', 'id="o-rup"', 'id="o-rwall"', 'id="o-rlook"',
+                 "wallYaw, nextWall, parseLen, roomOffset, roomCheck } from \"./model.js?v=2\"",
+                 "yaw.rotation.y = wallYaw(roomPos.wall);", "mount.rotation.x = mountTurnX(true);",
+                 "roomOffset(room.wallW, room.wallH, along, height, roomPos.nudge)", "roomRoot.visible = ok && modelWall();",
+                 "if (roomRoot) { group.add(roomRoot); poseRoom(); }", "modelLine() + roomLine()",
+                 '(ROOM_BUTTONS.includes(id) && !room)', "plumbAxes(fitRectangle(centres, n))",
+                 "loadRoom(url, name, units", "setRoom({", "roomState,", "roomView(eye, at)"]:
+        assert hook in html, hook
+    # the sample room the card's button fetches is in the published models
+    url = html.split('loadRoom("', 1)[1].split("?", 1)[0]
+    assert (PREVIEW / url).is_file(), url
+
+
+# ---------- room model alignment ----------
+
+def test_wall_yaw_brings_that_face_to_the_back(node_available):
+    # rotating about y by a maps (x, z) -> (x cos a + z sin a, -x sin a + z cos a); the named face must end at -z
+    face = {"back": (0, -1), "right": (1, 0), "front": (0, 1), "left": (-1, 0)}
+    for w, (x, z) in face.items():
+        a = run(f'M.wallYaw("{w}")')
+        assert (x * math.cos(a) + z * math.sin(a), -x * math.sin(a) + z * math.cos(a)) == pytest.approx((0, -1), abs=1e-12), w
+    with pytest.raises(RuntimeError, match='unknown wall "up"'):
+        run('M.wallYaw("up")')
+
+
+def test_next_wall_cycles_and_faces(node_available):
+    assert run('["back", "right", "front", "left"].map(M.nextWall)') == ["right", "front", "left", "back"]
+    assert run('M.ROOM_WALLS.map(M.wallFace)') == ["-Z", "+X", "+Z", "-X"]
+
+
+@pytest.mark.parametrize("v,want", [("1.2", 1.2), ("1,25", 1.25), (" 0.9 m", 0.9), ("2M", 2), (3, 3), ("0", 0)])
+def test_parse_len(v, want, node_available):
+    assert run(f"M.parseLen({json.dumps(v)})") == want
+
+
+@pytest.mark.parametrize("v", ["", "  ", None, "abc"])
+def test_parse_len_none(v, node_available):
+    assert run(f"Number.isNaN(M.parseLen({json.dumps(v)}))") is True
+
+
+def test_room_offset_puts_corner_and_floor_where_measured(node_available):
+    W, H = 4.6, 3.05
+    x, z = run(f"M.roomOffset({W}, {H}, 1.2, 1.4)")
+    # the seated room spans x in [-W/2, W/2], z in [-H/2, H/2] (z down); after the move, relative to the tags:
+    assert -W / 2 + x == pytest.approx(-1.2)          # left corner 1.2 m to the left of the tag centre
+    assert H / 2 + z == pytest.approx(1.4)            # floor 1.4 m below it
+    nx, nz = run(f"M.roomOffset({W}, {H}, 1.2, 1.4, [0.05, 0.02])")
+    assert (nx - x, nz - z) == pytest.approx((0.05, -0.02))   # nudge right and up (up is -z)
+
+
+def test_room_check(node_available):
+    assert run("M.roomCheck(4.6, 3.05, 1.2, 1.4)") == []
+    assert run("M.roomCheck(4.6, 3.05, 0, 0)") == [] and run("M.roomCheck(4.6, 3.05, 4.6, 3.05)") == []
+    assert "wrong wall" in run("M.roomCheck(4.6, 3.05, 5, 1.4)")[0]
+    assert "wrong wall" in run("M.roomCheck(4.6, 3.05, -0.1, 1.4)")[0]
+    assert "3.05 m high" in run("M.roomCheck(4.6, 3.05, 1, 3.2)")[0]
+    assert "3.05 m high" in run("M.roomCheck(4.6, 3.05, 1, -0.2)")[0]
+    two = run("M.roomCheck(4.6, 3.05, NaN, NaN)")
+    assert len(two) == 2 and "left corner" in two[0] and "above the floor" in two[1]

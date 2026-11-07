@@ -96,3 +96,43 @@ export function parsePose(src) {
 
 // A loaded pose belongs to these tags only if the ids match; warn otherwise (the frame differs).
 export const sameTags = (poseIds, rectIds) => String(poseIds) === String(rectIds);
+
+// ---------- a room model aligned to the real room (seen from inside) ----------
+// The tags are taped on one wall of the real room. The room model's matching wall is put on the tag
+// plane, its inside facing out of the wall (toward the viewer), its floor at the measured height
+// below the tags and its left corner at the measured distance to their left (facing the wall).
+
+// Which face of the model's box goes on the tag wall: the turn about the model's up axis that brings
+// that face to the back (-z, which the wall mount lays on the wall). Seen from inside, facing it.
+export const ROOM_WALLS = ["back", "right", "front", "left"];
+const WALL_FACE = { back: "-Z", right: "+X", front: "+Z", left: "-X" };
+export const wallFace = (w) => WALL_FACE[w];
+export function wallYaw(w) {
+  const i = ROOM_WALLS.indexOf(w);
+  if (i < 0) throw new Error(`unknown wall "${w}"`);
+  return (i * Math.PI) / 2;
+}
+export const nextWall = (w) => ROOM_WALLS[(ROOM_WALLS.indexOf(w) + 1) % 4];
+
+// A typed length in metres ("1.2", "1,2", " 1.2 m"); NaN if there is none.
+export function parseLen(v) {
+  const s = String(v ?? "").trim().replace(",", ".").replace(/\s*m$/i, "");
+  return s === "" ? NaN : Number(s);
+}
+
+// Where the seated room (centred on the tags, wall width W, wall height H, metres) must move, in the
+// tag frame [x right along the wall, z down], so the tag centre is `along` from the left corner and
+// `height` above the floor. nudge = [right, up] in metres for fine alignment by eye.
+export function roomOffset(W, H, along, height, nudge = [0, 0]) {
+  return [W / 2 - along + nudge[0], height - H / 2 - nudge[1]];
+}
+
+// Problems with the measured tag position on a W x H wall, as sentences (empty = fine).
+export function roomCheck(W, H, along, height) {
+  const out = [];
+  if (!Number.isFinite(along)) out.push("type the distance from the left corner to the tags' centre");
+  else if (along < 0 || along > W) out.push(`the tags' centre is ${along.toFixed(2)} m from the left corner but this wall is ${W.toFixed(2)} m wide: wrong wall?`);
+  if (!Number.isFinite(height)) out.push("type the height of the tags' centre above the floor");
+  else if (height < 0 || height > H) out.push(`the tags' centre is ${height.toFixed(2)} m up but the room is ${H.toFixed(2)} m high`);
+  return out;
+}

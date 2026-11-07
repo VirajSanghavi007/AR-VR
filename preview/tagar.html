@@ -133,6 +133,29 @@ label.f input[type=file] { font: .85rem var(--sans); padding: 6px; }
   </div>
 
   <div class="card">
+    <p class="label">Room model (optional)</p>
+    <p class="note">A <b>.glb</b> of the whole room (walls, floor, ceiling) to line up with the real one and walk around inside.
+      Tape the tags on one wall, pick which wall of the model that is, and type where the tags' centre is: its distance from that
+      wall's left corner (facing the wall) and its height above the floor. In AR, turn round: the model's corners and edges
+      (cyan lines) should sit on the real ones; <b>Right</b> and <b>Up</b> nudge it, <b>See-through</b> swaps solid and ghost walls.</p>
+    <div class="row">
+      <label class="f">Room file (.glb)<input id="r-file" type="file" accept=".glb,model/gltf-binary"></label>
+      <label class="f">Room units<select id="r-units">
+        <option value="auto">Auto (guess)</option><option value="m">metres</option><option value="cm">centimetres</option>
+        <option value="mm">millimetres</option><option value="in">inches</option></select></label>
+      <button id="r-sample" type="button">Use the sample room</button>
+    </div>
+    <div class="row">
+      <label class="f">Tags are on the model's<select id="r-wall">
+        <option value="back">back wall (-Z side)</option><option value="right">right wall (+X side)</option>
+        <option value="front">front wall (+Z side)</option><option value="left">left wall (-X side)</option></select></label>
+      <label class="f">Tags' centre from the left corner (m)<input id="r-along" type="text" inputmode="decimal" placeholder="e.g. 1.20"></label>
+      <label class="f">Tags' centre above the floor (m)<input id="r-height" type="text" inputmode="decimal" placeholder="e.g. 1.10"></label>
+    </div>
+    <p class="note" id="r-info">No room loaded.</p>
+  </div>
+
+  <div class="card">
     <button class="go" id="start" disabled>Start AR</button>
     <p class="note" id="status">Checking whether this device supports AR…</p>
   </div>
@@ -146,6 +169,12 @@ label.f input[type=file] { font: .85rem var(--sans); padding: 6px; }
       <label>Rows<input id="o-rows" type="number" inputmode="numeric" min="1" max="10" step="1" value="1"></label>
       <label>Columns<input id="o-cols" type="number" inputmode="numeric" min="1" max="10" step="1" value="1"></label>
     </div>
+    <div class="grid" id="o-rctl" hidden>
+      <label>Right<input id="o-ralong" type="range" min="-50" max="50" step="1" value="0"><output id="o-ralong-v">0 cm</output></label>
+      <label>Up<input id="o-rup" type="range" min="-50" max="50" step="1" value="0"><output id="o-rup-v">0 cm</output></label>
+    </div>
+    <button id="o-rwall" hidden>Next wall</button>
+    <button id="o-rlook" hidden aria-pressed="true">See-through</button>
     <div class="grid" id="o-mctl" hidden>
       <label>Turn<input id="o-mturn" type="range" min="0" max="359" step="1" value="0"><output id="o-mturn-v">0°</output></label>
       <label>Scale<input id="o-mscale" type="range" min="10" max="300" step="1" value="100"><output id="o-mscale-v">100%</output></label>
@@ -188,7 +217,8 @@ import { PANEL_LOOKS, lookByKey, nextLook, cellLayout, panelHit, twistDelta, isL
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { UNIT_M, guessUnits, realSize, fmtSize, seat, mountTurnX, clampPct, clampDeg, rulerTicks, rulerStart,
-         poseFileName, poseRecord, parsePose, sameTags } from "./model.js?v=1";
+         poseFileName, poseRecord, parsePose, sameTags,
+         wallFace, wallYaw, nextWall, parseLen, roomOffset, roomCheck } from "./model.js?v=2";
 import { composite, caption, shotName } from "./snap.js?v=2";
 
 const DETECT_EVERY_MS = 250, FOLLOW_EVERY_MS = 400, HIT_GRACE_MS = 500, MAX_ANGLE_ERR = 12, EDGE_WARN = 0.15;
@@ -528,6 +558,7 @@ function place() {
   group.add(sun, sun.target, shadowCatcher);
   if (model && modelRoot.userData.wall !== modelWall()) buildModel();
   if (modelRoot) group.add(modelRoot);
+  if (roomRoot) { group.add(roomRoot); poseRoom(); }
   updatePanels();
   // outline of the tag rectangle itself, on the table
   const hw = rect.width / 2, hh = rect.height / 2;
@@ -554,15 +585,16 @@ function report() {
   const fit = Math.abs(scale - fitS) < 1e-9 ? " (auto fit)" : "";
   const edge = lastEdge ? ` · tag edge ${(lastEdge * 1000).toFixed(0)} mm (printed ${(tagSize * 1000).toFixed(0)})` : "";
   $("hud").innerHTML = `Scale ${scaleLabel(scale)}${fit}` +
-    panelLine() + modelLine() + `<small>tags ${(rect.width * 100).toFixed(1)} × ${(rect.height * 100).toFixed(1)} cm · panels shown ${cm(design.w)} × ${cm(design.d)} cm${edge}</small>` +
+    panelLine() + modelLine() + roomLine() + `<small>tags ${(rect.width * 100).toFixed(1)} × ${(rect.height * 100).toFixed(1)} cm · panels shown ${cm(design.w)} × ${cm(design.d)} cm${edge}</small>` +
     (Math.abs(lastEdge - tagSize) / tagSize > EDGE_WARN
       ? `<small style="color:#ffb86b">The tags measure off from the printed size: the ring was probably not on the table. Press Find tags again with the ring between the tags.</small>` : "");
 }
 
-const BUTTONS = ["o-mctl", "o-mplace", "o-mbar", "o-msave", "o-grid", "o-minus", "o-fit", "o-plus", "o-look", "o-pturn", "o-turn", "o-shot", "o-relock"];
+const BUTTONS = ["o-rctl", "o-rwall", "o-rlook", "o-mctl", "o-mplace", "o-mbar", "o-msave", "o-grid", "o-minus", "o-fit", "o-plus", "o-look", "o-pturn", "o-turn", "o-shot", "o-relock"];
 const MODEL_BUTTONS = ["o-mctl", "o-mplace", "o-mbar", "o-msave"];
+const ROOM_BUTTONS = ["o-rctl", "o-rwall", "o-rlook"];
 function setButtons(locked) {
-  BUTTONS.forEach((id) => { $(id).hidden = !locked || (MODEL_BUTTONS.includes(id) && !model); });
+  BUTTONS.forEach((id) => { $(id).hidden = !locked || (MODEL_BUTTONS.includes(id) && !model) || (ROOM_BUTTONS.includes(id) && !room); });
 }
 
 // ---------- photo: camera image + the panel, rendered again off screen at the camera's size ----------
@@ -1019,6 +1051,122 @@ $("o-msave").onclick = () => savePose();
 $("o-mturn").oninput = () => { modelPose.deg = clampDeg($("o-mturn").value); poseModel(); };
 $("o-mscale").oninput = () => { modelPose.pct = clampPct($("o-mscale").value); poseModel(); };
 
+// ---------- the room's CAD model, lined up with the real room (walk around inside it) ----------
+// roomRoot (in group) > rg (moved by roomOffset) > seat > mount (wall: up goes up the wall) > yaw (which
+// face of the model goes on the tag wall) > metres per unit > the glTF scene. Needs the tags on a wall.
+let room = null, roomRoot = null, roomSeeThrough = true;
+const roomPos = { wall: "back", nudge: [0, 0] };
+const roomUnits = () => ($("r-units").value === "auto" ? guessUnits(Math.max(...room.sizeRaw)) : $("r-units").value);
+const roomLen = () => [parseLen($("r-along").value), parseLen($("r-height").value)];
+const SEE_THROUGH = new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.14, depthWrite: false, side: THREE.DoubleSide });
+const ROOM_EDGE = new THREE.LineBasicMaterial({ color: 0x29d3ff });
+
+function loadRoom(url, name) {
+  $("r-info").textContent = `Loading ${name}…`;
+  return new Promise((resolve) => {
+    new GLTFLoader().load(url, (gltf) => {
+      const obj = gltf.scene, meshes = [];
+      obj.traverse((o) => { if (o.isMesh) meshes.push(o); });
+      for (const m of meshes) {                                  // walls are seen from inside: both sides, no shadows
+        m.castShadow = m.receiveShadow = false;
+        m.userData.solid = [m.material].flat().map((mt) => { const c = mt.clone(); c.side = THREE.DoubleSide; return c; });
+        m.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, 25), ROOM_EDGE));
+      }
+      const sizeRaw = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3()).toArray();
+      try { guessUnits(Math.max(...sizeRaw)); } catch (e) { $("r-info").textContent = `${name}: ${e.message}`; resolve(null); return; }
+      room = { name, obj, meshes, sizeRaw };
+      buildRoom();
+      describeRoom();
+      if (rect) { setButtons(true); place(); }
+      resolve(roomState());
+    }, undefined, (e) => { $("r-info").textContent = `Could not load ${name}: ${e.message || e}`; resolve(null); });
+  });
+}
+
+function describeRoom() {
+  if (!room) return;
+  const s = realSize(room.sizeRaw, roomUnits());
+  $("r-info").innerHTML = `<b>${room.name}</b>: ${fmtSize(s)} (width × height × depth), read as ${UNIT_NAMES[roomUnits()]}` +
+    `${$("r-units").value === "auto" ? " (a guess)" : ""}. The tags go on its <b>${roomPos.wall}</b> wall (the model's ${wallFace(roomPos.wall)} side)` +
+    `; <b>Next wall</b> in AR tries the others.`;
+}
+
+function roomLook() {
+  if (!room) return;
+  for (const m of room.meshes) m.material = roomSeeThrough ? SEE_THROUGH : (m.userData.solid.length > 1 ? m.userData.solid : m.userData.solid[0]);
+}
+
+function buildRoom() {
+  if (!room) return;
+  const units = new THREE.Group(), yaw = new THREE.Group(), mount = new THREE.Group(), seatG = new THREE.Group(), rg = new THREE.Group();
+  units.scale.setScalar(UNIT_M[roomUnits()]);
+  units.add(room.obj);
+  yaw.rotation.y = wallYaw(roomPos.wall);
+  yaw.add(units);
+  mount.rotation.x = mountTurnX(true);
+  mount.add(yaw);
+  const tmp = new THREE.Group();
+  tmp.add(mount); tmp.updateMatrixWorld(true);
+  const b = new THREE.Box3().setFromObject(mount), off = seat(b.min.toArray(), b.max.toArray()), size = b.getSize(new THREE.Vector3());
+  seatG.position.fromArray(off);
+  seatG.add(mount);
+  rg.add(seatG);
+  room.wallW = size.x; room.wallH = size.z; room.depth = size.y;
+  if (roomRoot) roomRoot.removeFromParent();
+  roomRoot = new THREE.Group();
+  roomRoot.add(rg);
+  roomRoot.userData = { rg };
+  roomLook();
+  if (rect) group.add(roomRoot);
+  poseRoom();
+}
+
+function poseRoom() {
+  if (!roomRoot) return;
+  const [along, height] = roomLen(), ok = !roomCheck(room.wallW, room.wallH, along, height).length;
+  const [x, z] = ok ? roomOffset(room.wallW, room.wallH, along, height, roomPos.nudge) : [0, 0];
+  roomRoot.userData.rg.position.set(x, 0, z);
+  roomRoot.visible = ok && modelWall();
+  $("o-ralong").value = Math.round(roomPos.nudge[0] * 100); $("o-ralong-v").textContent = `${Math.round(roomPos.nudge[0] * 100)} cm`;
+  $("o-rup").value = Math.round(roomPos.nudge[1] * 100); $("o-rup-v").textContent = `${Math.round(roomPos.nudge[1] * 100)} cm`;
+  $("o-rlook").setAttribute("aria-pressed", String(roomSeeThrough));
+  if (rect) report();
+}
+
+function roomLine() {
+  if (!room) return "";
+  if (!modelWall()) return `<small style="color:#ffb86b">Room ${room.name}: tape the tags on a wall to line the room up (they are on a table or floor now)</small>`;
+  const [along, height] = roomLen(), bad = roomCheck(room.wallW, room.wallH, along, height);
+  if (bad.length) return `<small style="color:#ffb86b">Room ${room.name}: ${bad.join("; ")}</small>`;
+  const [a, u] = roomPos.nudge.map((v) => Math.round(v * 100));
+  return `<small style="color:#8fe3ff">Room ${room.name}: ${roomPos.wall} wall (${room.wallW.toFixed(2)} m wide, ${room.wallH.toFixed(2)} m high, ` +
+    `${room.depth.toFixed(2)} m deep) · tags ${along.toFixed(2)} m from its left corner, ${height.toFixed(2)} m up` +
+    `${a || u ? ` · nudged ${a} cm right, ${u} cm up` : ""} · turn round: do the corners and edges sit on the real ones?</small>`;
+}
+
+function roomState() {
+  if (!room) return { loaded: false };
+  const st = { loaded: true, name: room.name, units: roomUnits(), sizeM: realSize(room.sizeRaw, roomUnits()), wall: roomPos.wall,
+               nudge: [...roomPos.nudge], seeThrough: roomSeeThrough, wallW: room.wallW, wallH: room.wallH, depth: room.depth,
+               inScene: !!(roomRoot && roomRoot.parent), visible: !!(roomRoot && roomRoot.visible) };
+  if (roomRoot && roomRoot.parent) {
+    group.updateMatrixWorld(true);
+    const inv = group.matrixWorld.clone().invert(), box = new THREE.Box3().setFromObject(roomRoot.userData.rg).applyMatrix4(inv);
+    st.roomBox = { min: box.min.toArray(), max: box.max.toArray() };     // in the tag frame (x right, y out, z down)
+  }
+  return st;
+}
+
+$("r-file").onchange = () => { const f = $("r-file").files[0]; if (f) loadRoom(URL.createObjectURL(f), f.name); };
+$("r-sample").onclick = () => loadRoom("models/sample_room.glb?v=1", "sample_room.glb");
+$("r-units").onchange = () => { if (room) { buildRoom(); describeRoom(); } };
+$("r-wall").onchange = () => { roomPos.wall = $("r-wall").value; if (room) { buildRoom(); describeRoom(); } };
+$("r-along").oninput = $("r-height").oninput = () => poseRoom();
+$("o-rwall").onclick = () => { roomPos.wall = $("r-wall").value = nextWall(roomPos.wall); buildRoom(); describeRoom(); };
+$("o-rlook").onclick = () => { roomSeeThrough = !roomSeeThrough; roomLook(); poseRoom(); };
+$("o-ralong").oninput = () => { roomPos.nudge[0] = Number($("o-ralong").value) / 100; poseRoom(); };
+$("o-rup").oninput = () => { roomPos.nudge[1] = Number($("o-rup").value) / 100; poseRoom(); };
+
 // ---------- touching the panel ----------
 // Screen point -> roof point [x, z] in roof metres, through the current camera onto the locked table plane.
 function surfaceHit(cx, cy) {
@@ -1121,7 +1269,7 @@ window.__tagar = {
   simulate(centres = [[-0.4, 0, -0.25], [0.4, 0, -0.25], [0.4, 0, 0.25], [-0.4, 0, 0.25]], n = [0, 1, 0], edge = 0.16) {
     if (!renderer) buildScene();
     $("overlay").classList.add("on");
-    const r = fitRectangle(centres, n);
+    const r = plumbAxes(fitRectangle(centres, n));   // as the real lock does: on a wall v points down
     r.edge = edge;
     simulated = true;
     lock({}, r);
@@ -1154,6 +1302,26 @@ window.__tagar = {
   savePose() { return savePose(); },
   loadPose(obj) { return usePose(obj); },
   modelState,
+  // room checks: load a room .glb, set which wall the tags are on and where, read its box in the tag frame
+  loadRoom(url, name, units = "auto") { $("r-units").value = units; return loadRoom(url, name); },
+  setRoom({ wall, along, height, nudge, seeThrough } = {}) {
+    if (wall !== undefined) { $("r-wall").value = wall; $("r-wall").dispatchEvent(new Event("change")); }
+    if (along !== undefined) $("r-along").value = along;
+    if (height !== undefined) $("r-height").value = height;
+    if (nudge !== undefined) roomPos.nudge = [...nudge];
+    if (seeThrough !== undefined && seeThrough !== roomSeeThrough) $("o-rlook").click();
+    poseRoom();
+    return roomState();
+  },
+  roomState,
+  // put the camera at eye looking at at, both in the tag frame (x right, y out of the wall, z down), e.g. inside the room
+  roomView(eye, at) {
+    group.updateMatrixWorld(true);
+    const e = group.localToWorld(new THREE.Vector3(...eye)), a = group.localToWorld(new THREE.Vector3(...at));
+    camera.position.copy(e); camera.up.set(0, 1, 0); camera.lookAt(a); camera.updateMatrixWorld(true);
+    renderer.render(scene, camera);                                     // a hidden tab pauses the loop: draw this view now
+    return { eye: e.toArray(), at: a.toArray() };
+  },
   tapAt(x, y) { placing = true; placeModel(surfacePoint(x, y)); return this.modelState(); },
   screenOfRoom(p) { scene.updateMatrixWorld(true); const v = group.localToWorld(new THREE.Vector3(p[0], 0, p[1])).project(camera);
                     return [((v.x + 1) / 2) * innerWidth, ((1 - v.y) / 2) * innerHeight]; },
