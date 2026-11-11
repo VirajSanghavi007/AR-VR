@@ -90,11 +90,13 @@ def _floats(a):
     return " ".join(f"{x:.6g}" for x in np.asarray(a, float).ravel())
 
 
-def dae_text(parts, unit=INCH, unit_name="inch"):
-    """COLLADA 1.4.1 like SketchUp writes: one geometry per material, Z_UP, coordinates in `unit`s."""
-    mats = [m for m in MATERIALS if any(p.material == m for p in parts)]
+def dae_text(parts, unit=INCH, unit_name="inch", materials=None, tool="SketchUp-style sample (rooftop/sketchup_sample.py)"):
+    """COLLADA 1.4.1 like SketchUp writes: one geometry per material, Z_UP, coordinates in `unit`s.
+    materials: name -> diffuse RGB 0..1 (default MATERIALS); tool: the authoring_tool text."""
+    materials = MATERIALS if materials is None else materials
+    mats = [m for m in materials if any(p.material == m for p in parts)]
     eff = "".join(f'<effect id="{m}-fx"><profile_COMMON><technique sid="common"><lambert><diffuse>'
-                  f'<color>{_floats(MATERIALS[m])} 1</color></diffuse></lambert></technique></profile_COMMON></effect>'
+                  f'<color>{_floats(materials[m])} 1</color></diffuse></lambert></technique></profile_COMMON></effect>'
                   for m in mats)
     lib_mat = "".join(f'<material id="{m}-mat" name="{m}"><instance_effect url="#{m}-fx"/></material>' for m in mats)
     geos, nodes = [], []
@@ -126,7 +128,7 @@ def dae_text(parts, unit=INCH, unit_name="inch"):
                      f'</instance_geometry></node>')
     return ('<?xml version="1.0" encoding="utf-8"?>\n'
             '<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">'
-            '<asset><contributor><authoring_tool>SketchUp-style sample (rooftop/sketchup_sample.py)</authoring_tool>'
+            f'<asset><contributor><authoring_tool>{escape(tool)}</authoring_tool>'
             f'</contributor><unit meter="{unit}" name="{unit_name}"/><up_axis>Z_UP</up_axis></asset>'
             f'<library_effects>{eff}</library_effects><library_materials>{lib_mat}</library_materials>'
             f'<library_geometries>{"".join(geos)}</library_geometries>'
@@ -134,10 +136,10 @@ def dae_text(parts, unit=INCH, unit_name="inch"):
             '<scene><instance_visual_scene url="#scene"/></scene></COLLADA>\n')
 
 
-def obj_text(parts, mtl_name, unit=INCH, unit_name="inches"):
+def obj_text(parts, mtl_name, unit=INCH, unit_name="inches", tool="SketchUp-style sample (rooftop/sketchup_sample.py)"):
     """OBJ as SketchUp exports with "swap YZ" on: Y up (x, z, -y), in `unit`s (named in the header the way SketchUp
     writes it, "# File units = inches"), one group per part, flat normals."""
-    out = ["# SketchUp-style sample (rooftop/sketchup_sample.py)", f"# File units = {unit_name}", f"mtllib {mtl_name}"]
+    out = [f"# {tool}", f"# File units = {unit_name}", f"mtllib {mtl_name}"]
     k = kn = 0                                                                  # vertices / normals written so far
     for i, p in enumerate(parts):
         v = p.vertices[:, [0, 2, 1]] * [1, 1, -1] / unit                         # z up -> y up, keeps handedness
@@ -153,9 +155,10 @@ def obj_text(parts, mtl_name, unit=INCH, unit_name="inches"):
     return "\n".join(out) + "\n"
 
 
-def mtl_text(parts):
-    mats = [m for m in MATERIALS if any(p.material == m for p in parts)]
-    return "".join(f"newmtl {m}\nKd {_floats(MATERIALS[m])}\nKa 0 0 0\nd 1\n\n" for m in mats)
+def mtl_text(parts, materials=None):
+    materials = MATERIALS if materials is None else materials
+    mats = [m for m in materials if any(p.material == m for p in parts)]
+    return "".join(f"newmtl {m}\nKd {_floats(materials[m])}\nKa 0 0 0\nd 1\n\n" for m in mats)
 
 
 def write_sample(out_dir, name="sample_sketchup_pergola"):

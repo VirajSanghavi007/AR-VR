@@ -185,7 +185,7 @@ def test_page_wires_the_room_model():
         assert hook in html, hook
     # the sample room the card's button fetches is in the published models
     urls = [u.split("?", 1)[0] for u in html.split('loadRoom("')[1:]]
-    assert urls == ["models/sample_room.glb", "models/duplex_living_room.glb"], urls
+    assert urls == ["models/sample_room.glb", "models/duplex_living_room.glb", "models/office_scan_room.dae"], urls
     for url in urls:
         assert (PREVIEW / url).is_file(), url
     # the real room button reads it as metres and the page credits its source (CC BY 4.0)

@@ -147,6 +147,7 @@ label.f input[type=file] { font: .85rem var(--sans); padding: 6px; }
         <option value="mm">millimetres</option><option value="in">inches</option><option value="ft">feet</option></select></label>
       <button id="r-sample" type="button">Use the sample room</button>
       <button id="r-duplex" type="button">Use a real room (duplex living room)</button>
+      <button id="r-scan" type="button">Use a laser-scanned room (office, SketchUp .dae)</button>
     </div>
     <div class="row">
       <label class="f">Tags are on the model's<select id="r-wall">
@@ -158,7 +159,10 @@ label.f input[type=file] { font: .85rem var(--sans); padding: 6px; }
     <p class="note" id="r-info">No room loaded.</p>
     <p class="note">The real room is the living room (A102, 5.78 × 4.78 m, 2.58 m high; door and glass wall on its front) cut out of
       <a href="https://github.com/buildingsmart-community/Community-Sample-Test-Files">BSI (2020) "Duplex Apartment Test Files," buildingSMART International</a>,
-      CC BY 4.0; changed: one room clipped out and converted from IFC to GLB.</p>
+      CC BY 4.0; changed: one room clipped out and converted from IFC to GLB.
+      The scanned room is the office (3.14 × 4.48 m, 4.05 m high; window on its back wall) from the
+      <a href="https://www.eth3d.net/datasets">ETH3D benchmark</a> laser scan (Schöps et al., CVPR 2017), CC BY-NC-SA 4.0;
+      changed: meshed, levelled and squared, floor and ceiling replaced by fitted planes, written as a SketchUp COLLADA export.</p>
   </div>
 
   <div class="card">
@@ -1216,6 +1220,7 @@ $("r-file").onchange = () => {
 };
 $("r-sample").onclick = () => loadRoom("models/sample_room.glb?v=1", "sample_room.glb");
 $("r-duplex").onclick = () => { $("r-units").value = "m"; loadRoom("models/duplex_living_room.glb?v=1", "duplex_living_room.glb"); };
+$("r-scan").onclick = () => { $("r-units").value = "auto"; loadRoom("models/office_scan_room.dae?v=1", "office_scan_room.dae"); };
 $("r-units").onchange = () => { if (room) { buildRoom(); describeRoom(); } };
 $("r-wall").onchange = () => { roomPos.wall = $("r-wall").value; if (room) { buildRoom(); describeRoom(); } };
 $("r-along").oninput = $("r-height").oninput = () => poseRoom();
