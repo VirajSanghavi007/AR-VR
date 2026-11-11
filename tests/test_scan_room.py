@@ -370,7 +370,7 @@ def page():
     with sync_playwright() as p:
         b = p.chromium.launch(executable_path=CHROME, headless=True, args=["--use-angle=swiftshader", "--enable-unsafe-swiftshader"])
         pg = b.new_page(viewport={"width": 800, "height": 450})
-        pg.goto(f"http://127.0.0.1:{srv.server_address[1]}/tagar.html?samples=0")
+        pg.goto(f"http://127.0.0.1:{srv.server_address[1]}/tagar.html?samples=0&room=1")   # the room card is Phase 3
         pg.wait_for_function("window.__tagar && window.AR", timeout=30000)
         yield pg
         b.close()
@@ -379,7 +379,7 @@ def page():
 
 def test_room_card_button_loads_the_scanned_office_in_metres(page):
     page.evaluate("document.getElementById('r-units').value = 'cm'")         # the button resets the units menu
-    page.evaluate("document.getElementById('r-scan').click()")
+    page.click("#r-scan")                                                     # a real click: the card is shown
     page.wait_for_function("window.__tagar.roomState().name === 'office_scan_room.dae'", timeout=60000)
     s = page.evaluate("__tagar.roomState()")
     assert page.evaluate("document.getElementById('r-units').value") == "auto"

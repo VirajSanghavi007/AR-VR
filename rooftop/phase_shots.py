@@ -33,7 +33,7 @@ SHOTS = [
     {"name": "phase3_terrace.jpg", "page": "vr.html?phase=3",
      "ready": "window.__vr && __vr.world.children.length > 0 && __vr.scanCount() > 0",
      "setup": "", "settle_ms": 2500},
-    {"name": "phase3_room.jpg", "page": "tagar.html",
+    {"name": "phase3_room.jpg", "page": "tagar.html?room=1",
      "ready": "window.__tagar",
      "setup": "await __tagar.samples(); __tagar.simulate([[-0.5, 1.6, -1], [0.5, 1.6, -1], [0.5, 1.0, -1],"
               " [-0.5, 1.0, -1]], [0, 0, 1]); __tagar.setRoom({ seeThrough: false });"

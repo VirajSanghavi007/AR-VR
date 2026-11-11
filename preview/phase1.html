@@ -19,40 +19,37 @@
 
   <header>
     <p class="kicker">Phase 1</p>
-    <h1>On-site AR: show the customer the panels where they will go</h1>
-    <p class="lead">An architect or installer prints a few AprilTags, lays them on a table, roof or wall, and the phone shows
-      solar panels (or the designer's SketchUp model) locked to them at a known scale, with the power they would make.</p>
+    <h1>On-site AR: show the customer the design where it will go</h1>
+    <p class="lead">An architect or installer tapes a few printed AprilTags round the site, sketches the design full size in AR
+      (walls, pergolas, planters, panels), and the customer walks round it, flips between options and gets the saved design to look at later.</p>
   </header>
 
   <div class="actions">
-    <a class="btn" href="tagar.html">Open the AR</a>
-    <a class="btn" href="site.html">Open the Site Designer (full size)</a>
+    <a class="btn" href="site.html">Open the Site Designer</a>
+    <a class="btn ghost" href="tagar.html">Quick table demo</a>
     <a class="btn ghost" href="viewer.html">Customer viewer</a>
     <a class="btn ghost" href="tags.html">Check your printed tags</a>
   </div>
 
-  <figure class="card">
-    <img src="phases/phase1_ar.jpg" alt="A 2 by 3 array of solar panels locked to four tags, with the power readout above" width="1200" height="750">
-    <figcaption>tagar.html on a desktop with four simulated tags 1.0 x 0.6 m apart: 6 panels, about
-      <span data-num="kw">2.40</span> kW peak, ~9.6 kWh/day at 5 sun hours.</figcaption>
-  </figure>
-
   <section class="card">
     <h2>How it works</h2>
     <ol class="steps">
-      <li>Print 2, 3 or 4 AprilTags (36h11 family, 160 mm by default) and put them at the corners of where the panels go.</li>
-      <li>Open the AR on an ARCore phone. It finds the tags and fits a rectangle through them; their printed size gives the scale.</li>
-      <li>Type rows and columns: the array fills the rectangle, shows peak kW and kWh/day, and follows the tags if they move.</li>
-      <li>Switch to the BIPV shingle look, tilt the panels on a rack, or place a SketchUp export (.dae, or .obj with its .mtl).</li>
-      <li>Take a photo with the panels composited in and share it with the customer.</li>
+      <li><b>Print tags.</b> AprilTags (36h11, 160 mm by default), a few per wall or corner of the site. <a href="tags.html">Check your printed tags</a> photographs them to make sure they will read.</li>
+      <li><b>Lock.</b> Open the <a href="site.html">Site Designer</a> on an ARCore phone and aim at the first wall's tags: the design locks to them at true scale.
+        Walk round and the other walls' tags are mapped as you go, so it stays put from every side.</li>
+      <li><b>Draw.</b> Outline slabs, wall lines pulled up to height, or blocks (wall, door, window, pergola, planter, bench, panel) in wood, glass, concrete,
+        plaster or metal. Move, turn, resize, undo. Import a SketchUp export and align it to a site corner.</li>
+      <li><b>Save.</b> Keep options A, B and C, a Before view and size labels. Save the design as JSON (it reopens locked to the same tags), export GLB, and record tape checks.</li>
+      <li><b>Show the customer.</b> Photos and video from the phone, and the <a href="viewer.html">customer viewer</a> opens the saved design in any browser.</li>
     </ol>
-    <p>For full size on site, the <a href="site.html">Site Designer</a> locks on the first wall's tags, maps the other walls' tags as you walk round,
-      and lets you draw outlines and wall lines or place walls, doors, windows, pergolas, planters, benches and panels. It keeps options A/B/C,
-      a Before view and size labels, takes photos and video, saves the design as JSON (it reopens locked to the same tags), exports GLB,
-      imports a SketchUp model and records tape checks. The <a href="viewer.html">customer viewer</a> opens a saved design in a browser.</p>
-    <p class="muted">Sample files load by default (a SketchUp pergola and a scanned office room), so the page works without imports.
-      Add <code>?samples=0</code> to start empty.</p>
+    <p class="muted">No site handy? The <a href="tagar.html">quick table demo</a> puts a panel array (with its peak kW and kWh/day) or a SketchUp model on 2 to 4 tags on a table.</p>
   </section>
+
+  <figure class="card">
+    <img src="phases/phase1_ar.jpg" alt="A 2 by 3 array of solar panels locked to four tags, with the power readout above" width="1200" height="750">
+    <figcaption>The quick table demo on a desktop with four simulated tags 1.0 x 0.6 m apart: 6 panels, about
+      <span data-num="kw">2.40</span> kW peak, ~9.6 kWh/day at 5 sun hours.</figcaption>
+  </figure>
 
   <section class="card">
     <h2>Where it stands</h2>

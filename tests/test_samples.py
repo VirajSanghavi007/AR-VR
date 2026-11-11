@@ -57,6 +57,18 @@ def test_samples_on(node_available, search, on):
     assert run(f"M.samplesOn({json.dumps(search)})") is on
 
 
+@pytest.mark.parametrize("search, on", [("", False), ("?", False), ("?samples=0", False), ("?room=0", False),
+                                        ("?room=no", False), ("?room=", False), ("?room=1", True), ("?room=on", True),
+                                        ("?room=TRUE", True), ("?x=1&room=%20yes%20", True)])
+def test_room_on_only_when_asked(node_available, search, on):
+    # the room card is Phase 3: tagar.html (the Phase 1 table demo) hides it unless ?room=1
+    assert run(f"M.roomOn({json.dumps(search)})") is on
+
+
+def test_room_on_without_a_search_string(node_available):
+    assert run("[M.roomOn(undefined), M.roomOn(null)]") == [False, False]
+
+
 def test_samples_on_without_a_search_string(node_available):
     assert run("[M.samplesOn(), M.samplesOn(null)]") == [True, True]
 
@@ -174,7 +186,8 @@ def test_published_photos_read_as_the_index_says():
 
 def test_pages_wire_the_samples():
     tagar = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
-    for hook in ["SAMPLES, samplesOn } from \"./model.js?v=4\";", 'id="samples-note" hidden', 'href="?samples=0"',
+    for hook in ["SAMPLES, samplesOn, roomOn } from \"./model.js?v=5\";", 'id="samples-note" hidden', 'href="?samples=0"',
+                 'id="samples-room" hidden', "if (!roomMode) return Promise.all([loadModel(m.url, m.name), null]);",
                  "samplesOn(location.search) ? loadSamples()", "if (n !== modelLoads) return null;", "if (n !== roomLoads) return null;"]:
         assert hook in tagar, hook
     tags = (PREVIEW / "tags.html").read_text(encoding="utf-8")
@@ -215,8 +228,22 @@ def page(browser):
     pg.close()
 
 
-def test_tagar_loads_the_sample_model_and_room(page):
+def test_tagar_loads_only_the_sample_model_by_default(page):
+    # Phase 1 table demo: the pergola loads, the room card stays hidden and no room is fetched
     page.goto(f"{page.base}/tagar.html")
+    page.wait_for_function("window.__tagar", timeout=30000)
+    got = page.evaluate("__tagar.samples()")                               # [model state, no room]
+    assert got[0]["name"] == "sample_sketchup_pergola.dae" and got[1] is None
+    hidden = lambda i: page.evaluate(f"document.getElementById('{i}').hidden")
+    assert page.evaluate("__tagar.modelState().name") == "sample_sketchup_pergola.dae"
+    assert page.evaluate("__tagar.roomState()") == {"loaded": False}
+    assert (hidden("room-card"), hidden("samples-note"), hidden("samples-room")) == (True, False, True)
+    assert page.evaluate("getComputedStyle(document.getElementById('room-card')).display") == "none"   # really not drawn
+    assert page.evaluate("document.getElementById('r-along').value") == ""
+
+
+def test_tagar_loads_the_sample_model_and_room(page):
+    page.goto(f"{page.base}/tagar.html?room=1")
     page.wait_for_function("window.__tagar", timeout=30000)
     page.evaluate("__tagar.samples()")                                     # waits for both loads
     m, r = page.evaluate("__tagar.modelState()"), page.evaluate("__tagar.roomState()")
@@ -225,6 +252,8 @@ def test_tagar_loads_the_sample_model_and_room(page):
     val = lambda i: page.evaluate(f"document.getElementById('{i}').value")
     assert (val("r-along"), val("r-height"), val("r-wall"), val("m-units"), val("r-units")) == ("1.20", "1.10", "back", "auto", "auto")
     assert page.evaluate("document.getElementById('samples-note').hidden") is False
+    assert page.evaluate("[document.getElementById('room-card').hidden, document.getElementById('samples-room').hidden]") == [False, False]
+    assert page.evaluate("getComputedStyle(document.getElementById('room-card')).display") == "flex"
     info = page.evaluate("document.getElementById('m-info').textContent")
     assert "sample_sketchup_pergola.dae" in info and "Loading" not in info
 

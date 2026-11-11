@@ -32,6 +32,7 @@ h1 { font-size: 1.4rem; font-weight: 600; margin: 0; }
 a { color: var(--accent); }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px;
         display: flex; flex-direction: column; gap: 12px; }
+.card[hidden] { display: none; }
 ol { margin: 0; padding-left: 20px; }
 li + li { margin-top: 4px; }
 .seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
@@ -89,7 +90,8 @@ label.f input[type=file] { font: .85rem var(--sans); padding: 6px; }
 <body>
 <div class="wrap">
   <h1>Tabletop AR on AprilTags</h1>
-  <p class="note"><a href="tags.html">Check your printed tags</a> · <a href="site.html">Site designer (full size, walk round)</a> · <a href="viewer.html">Design viewer</a></p>
+  <p class="note">A quick table demo: panels (or a SketchUp model) on a few tags. For full size on site, use the
+    <a href="site.html">Site Designer</a>. Also: <a href="tags.html">check your printed tags</a> · <a href="viewer.html">customer viewer</a>.</p>
 
   <div class="card">
     <p class="label">How it works</p>
@@ -114,9 +116,9 @@ label.f input[type=file] { font: .85rem var(--sans); padding: 6px; }
       <p class="label">Panel type</p>
       <div class="seg looks" role="group" aria-label="Panel type" id="looks"></div>
     </div>
-    <p class="note" id="samples-note" hidden>Testing: a sample model (solar pergola) and a sample room (scanned office, tags on its back wall
-      1.20 m from the left corner, 1.10 m up) are already loaded below. Pick your own files to replace them, or open the page as
-      <a href="?samples=0">tagar.html?samples=0</a> to start empty.</p>
+    <p class="note" id="samples-note" hidden>Testing: a sample model (solar pergola) is already loaded below<span id="samples-room" hidden>,
+      and a sample room (scanned office, tags on its back wall 1.20 m from the left corner, 1.10 m up)</span>. Pick your own files to
+      replace it, or open the page with <a href="?samples=0">?samples=0</a> to start empty.</p>
     <p class="note">Tag size is the black square's edge. It is only a check: the app measures each tag in AR and warns if the surface was misjudged.</p>
   </div>
 
@@ -137,8 +139,8 @@ label.f input[type=file] { font: .85rem var(--sans); padding: 6px; }
     <p class="note" id="m-info">No model loaded.</p>
   </div>
 
-  <div class="card">
-    <p class="label">Room model (optional)</p>
+  <div class="card" id="room-card" hidden>
+    <p class="label">Room model (Phase 3)</p>
     <p class="note">A <b>.glb</b> (or SketchUp .dae / .obj) of the whole room (walls, floor, ceiling) to line up with the real one and walk around inside.
       Tape the tags on one wall, pick which wall of the model that is, and type where the tags' centre is: its distance from that
       wall's left corner (facing the wall) and its height above the floor. In AR, turn round: the model's corners and edges
@@ -148,8 +150,6 @@ label.f input[type=file] { font: .85rem var(--sans); padding: 6px; }
       <label class="f">Room units<select id="r-units">
         <option value="auto">Auto (guess)</option><option value="m">metres</option><option value="cm">centimetres</option>
         <option value="mm">millimetres</option><option value="in">inches</option><option value="ft">feet</option></select></label>
-      <button id="r-sample" type="button">Use the sample room</button>
-      <button id="r-duplex" type="button">Use a real room (duplex living room)</button>
       <button id="r-scan" type="button">Use a laser-scanned room (office, SketchUp .dae)</button>
     </div>
     <div class="row">
@@ -160,10 +160,7 @@ label.f input[type=file] { font: .85rem var(--sans); padding: 6px; }
       <label class="f">Tags' centre above the floor (m)<input id="r-height" type="text" inputmode="decimal" placeholder="e.g. 1.10"></label>
     </div>
     <p class="note" id="r-info">No room loaded.</p>
-    <p class="note">The real room is the living room (A102, 5.78 × 4.78 m, 2.58 m high; door and glass wall on its front) cut out of
-      <a href="https://github.com/buildingsmart-community/Community-Sample-Test-Files">BSI (2020) "Duplex Apartment Test Files," buildingSMART International</a>,
-      CC BY 4.0; changed: one room clipped out and converted from IFC to GLB.
-      The scanned room is the office (3.14 × 4.48 m, 4.05 m high; window on its back wall) from the
+    <p class="note">The scanned room is the office (3.14 × 4.48 m, 4.05 m high; window on its back wall) from the
       <a href="https://www.eth3d.net/datasets">ETH3D benchmark</a> laser scan (Schöps et al., CVPR 2017), CC BY-NC-SA 4.0;
       changed: meshed, levelled and squared, floor and ceiling replaced by fitted planes, written as a SketchUp COLLADA export.</p>
   </div>
@@ -235,7 +232,7 @@ import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
 import { UNIT_M, guessUnits, realSize, fmtSize, seat, mountTurnX, clampPct, clampDeg, rulerTicks, rulerStart,
          poseFileName, poseRecord, parsePose, sameTags,
          wallFace, wallYaw, nextWall, parseLen, roomOffset, roomCheck,
-         modelKind, pickModelFiles, baseName, objFileUnits, fileUnits, SAMPLES, samplesOn } from "./model.js?v=4";
+         modelKind, pickModelFiles, baseName, objFileUnits, fileUnits, SAMPLES, samplesOn, roomOn } from "./model.js?v=5";
 import { composite, caption, shotName } from "./snap.js?v=2";
 import { mergeNested } from "./tagcheck.js?v=2";
 
@@ -1227,8 +1224,6 @@ $("r-file").onchange = () => {
   try { const p = pickedModel($("r-file").files); loadRoom(p.url, p.name, p.side); }
   catch (e) { $("r-info").textContent = e.message; }
 };
-$("r-sample").onclick = () => loadRoom("models/sample_room.glb?v=1", "sample_room.glb");
-$("r-duplex").onclick = () => { $("r-units").value = "m"; loadRoom("models/duplex_living_room.glb?v=1", "duplex_living_room.glb"); };
 $("r-scan").onclick = () => { $("r-units").value = "auto"; loadRoom("models/office_scan_room.dae?v=1", "office_scan_room.dae"); };
 $("r-units").onchange = () => { if (room) { buildRoom(); describeRoom(); } };
 $("r-wall").onchange = () => { roomPos.wall = $("r-wall").value; if (room) { buildRoom(); describeRoom(); } };
@@ -1471,15 +1466,22 @@ window.__tagar = {
   samples: () => samplesLoaded,
 };
 
-// While testing: the sample model and room load on their own, so nothing has to be picked first.
+// The room card is Phase 3 (?room=1); the Phase 1 table demo hides it.
+const roomMode = roomOn(location.search);
+$("room-card").hidden = !roomMode;
+
+// While testing: the sample model (and with ?room=1 the sample room) load on their own, so nothing has to be picked first.
 // ?samples=0 starts empty. Either is replaced by a file picked or a button pressed meanwhile.
 function loadSamples() {
   const m = SAMPLES.model, r = SAMPLES.room;
-  $("m-units").value = m.units; $("r-units").value = r.units;
+  $("m-units").value = m.units;
+  $("samples-note").hidden = false;
+  if (!roomMode) return Promise.all([loadModel(m.url, m.name), null]);
+  $("r-units").value = r.units;
   roomPos.wall = $("r-wall").value = r.wall;
   if (!$("r-along").value.trim()) $("r-along").value = r.along;
   if (!$("r-height").value.trim()) $("r-height").value = r.height;
-  $("samples-note").hidden = false;
+  $("samples-room").hidden = false;
   return Promise.all([loadModel(m.url, m.name), loadRoom(r.url, r.name)]);
 }
 const samplesLoaded = samplesOn(location.search) ? loadSamples() : Promise.resolve(null);

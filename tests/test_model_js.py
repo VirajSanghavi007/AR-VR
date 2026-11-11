@@ -172,9 +172,11 @@ def test_page_wires_the_cad_model():
 
 
 def test_page_wires_the_room_model():
-    # smoke: tagar.html has the room card, AR controls, the wiring into place()/report()/buttons and the debug hooks
+    # smoke: tagar.html has the room card (Phase 3, shown only with ?room=1), AR controls, the wiring into
+    # place()/report()/buttons and the debug hooks
     html = (PREVIEW / "tagar.html").read_text(encoding="utf8")
-    for hook in ['id="r-file"', 'id="r-units"', 'id="r-sample"', 'id="r-wall"', 'id="r-along"', 'id="r-height"', 'id="r-info"',
+    for hook in ['id="room-card" hidden', 'const roomMode = roomOn(location.search);', '$("room-card").hidden = !roomMode;',
+                 'id="r-file"', 'id="r-units"', 'id="r-scan"', 'id="r-wall"', 'id="r-along"', 'id="r-height"', 'id="r-info"',
                  'id="o-rctl"', 'id="o-ralong"', 'id="o-rup"', 'id="o-rwall"', 'id="o-rlook"',
                  "wallYaw, nextWall, parseLen, roomOffset, roomCheck,",
                  "yaw.rotation.y = wallYaw(roomPos.wall);", "mount.rotation.x = mountTurnX(true);",
@@ -183,14 +185,14 @@ def test_page_wires_the_room_model():
                  '(ROOM_BUTTONS.includes(id) && !room)', "plumbAxes(fitRectangle(centres, n))",
                  "loadRoom(url, name, units", "setRoom({", "roomState,", "roomView(eye, at)"]:
         assert hook in html, hook
-    # the sample room the card's button fetches is in the published models
+    # the one room button fetches the scanned office, which is in the published models; the old sample and duplex
+    # room buttons are gone from the page
     urls = [u.split("?", 1)[0] for u in html.split('loadRoom("')[1:]]
-    assert urls == ["models/sample_room.glb", "models/duplex_living_room.glb", "models/office_scan_room.dae"], urls
-    for url in urls:
-        assert (PREVIEW / url).is_file(), url
-    # the real room button reads it as metres and the page credits its source (CC BY 4.0)
-    assert '$("r-duplex").onclick = () => { $("r-units").value = "m";' in html
-    assert 'id="r-duplex"' in html and "buildingSMART International" in html and "CC BY 4.0" in html
+    assert urls == ["models/office_scan_room.dae"], urls
+    assert (PREVIEW / urls[0]).is_file()
+    for gone in ['id="r-sample"', 'id="r-duplex"', "duplex_living_room", "sample_room.glb"]:
+        assert gone not in html, gone
+    assert "ETH3D benchmark" in html and "CC BY-NC-SA 4.0" in html
 
 
 # ---------- room model alignment ----------
@@ -302,7 +304,7 @@ def test_page_wires_sketchup_files():
     for hook in ['import { ColladaLoader } from "three/addons/loaders/ColladaLoader.js";',
                  'import { OBJLoader } from "three/addons/loaders/OBJLoader.js";',
                  'import { MTLLoader } from "three/addons/loaders/MTLLoader.js";',
-                 'modelKind, pickModelFiles, baseName, objFileUnits, fileUnits, SAMPLES, samplesOn } from "./model.js?v=4";',
+                 'modelKind, pickModelFiles, baseName, objFileUnits, fileUnits, SAMPLES, samplesOn, roomOn } from "./model.js?v=5";',
                  "mgr.setURLModifier((u) => side[baseName(u)] || u);", "m.side = THREE.DoubleSide;",
                  "return readModel(url, name, side).then(", "pickedModel($(\"m-file\").files)", "pickedModel($(\"r-file\").files)",
                  "model.fileUnits || guessUnits(", "room.fileUnits || guessUnits(", 'id="m-sketchup"', '<option value="ft">feet</option>']:

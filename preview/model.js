@@ -197,3 +197,8 @@ export function samplesOn(search) {
   const v = new URLSearchParams(search || "").get("samples");
   return v === null || !["0", "off", "false", "no"].includes(v.trim().toLowerCase());
 }
+// The room card (line a room model up with the real room) is a Phase 3 feature: tagar.html shows it only with ?room=1.
+export function roomOn(search) {
+  const v = new URLSearchParams(search || "").get("room");
+  return v !== null && ["1", "on", "true", "yes"].includes(v.trim().toLowerCase());
+}
