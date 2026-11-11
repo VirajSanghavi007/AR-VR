@@ -330,7 +330,7 @@ def test_tagar_page_wiring():
                     "mostSeen(", "renderer.resetState()", "shadowMap.enabled = true", "ShadowMaterial",
                     "buildRack(", "mountParts("):
         assert feature in html, feature
-    assert 'url=tagar.html' in (PREVIEW / "index.html").read_text(encoding="utf-8")   # the site root opens the AR
+    assert 'href="tagar.html"' in (PREVIEW / "index.html").read_text(encoding="utf-8")   # the site root links the AR
 
 
 def test_camera_read_hands_the_xr_target_back():

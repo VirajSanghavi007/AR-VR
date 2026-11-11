@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Phase 3: CAD from a Scan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="phases/phase.css">
+</head>
+<body>
+<div class="wrap">
+  <nav class="phases" aria-label="Phases">
+    <a href="index.html">All phases</a>
+    <a href="phase1.html">Phase 1</a>
+    <a href="phase2.html">Phase 2</a>
+    <a href="phase3.html" aria-current="page">Phase 3</a>
+  </nav>
+
+  <header>
+    <p class="kicker">Phase 3</p>
+    <h1>No drawing: CAD made from a scan</h1>
+    <p class="lead">When there is no AutoCAD file, scan the place (photos or LiDAR), turn the points into clean planes and outlines,
+      and lay the panels out on that. Checked against a survey-grade laser scan, not against itself.</p>
+  </header>
+
+  <div class="actions">
+    <a class="btn" href="vr.html?phase=3">Open the scanned roof (with LiDAR layer)</a>
+    <a class="btn ghost" href="tagar.html">Open the scanned room in AR</a>
+  </div>
+
+  <div class="shots">
+    <figure class="card">
+      <img src="phases/phase3_terrace.jpg" alt="Panels on a roof outline fitted to a laser scan, the scan points shown around it" width="1200" height="750">
+      <figcaption>vr.html?phase=3: the terrace roof from the scan, 39 panels, with the LiDAR points switched on.</figcaption>
+    </figure>
+    <figure class="card">
+      <img src="phases/phase3_plan.jpg" alt="Top-down plan: roof outline, usable area after setback, keep-outs and 39 panels" width="1100" height="850">
+      <figcaption>The plan design_panels.py draws: outline, setback, keep-outs and the panel grid.</figcaption>
+    </figure>
+  </div>
+
+  <section class="card">
+    <h2>Roof from a laser scan (ETH3D terrace)</h2>
+    <div class="nums">
+      <div><b data-num="panels">39</b><span>panels</span></div>
+      <div><b data-num="kwp">15.6 kWp</b><span>at 400 W each</span></div>
+      <div><b data-num="outline_area_m2">130.7 m&sup2;</b><span>roof outline</span></div>
+      <div><b data-num="usable_area_m2">102.9 m&sup2;</b><span>usable after setback</span></div>
+      <div><b data-num="scan_points">120000</b><span>LiDAR points shown</span></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>How close is it? Checked against the true laser scan</h2>
+    <div class="nums">
+      <div><b data-num="cloud_median_cm">1.0 cm</b><span>median cloud error</span></div>
+      <div><b data-num="within_5cm_pct">81%</b><span>of points within 5 cm</span></div>
+      <div><b data-num="normal_err_deg">0.08&deg;</b><span>roof plane tilt error</span></div>
+      <div><b data-num="iou">0.955</b><span>outline overlap (IoU)</span></div>
+      <div><b data-num="area_err_pct">-3.7%</b><span>outline area error</span></div>
+      <div><b data-num="corners_outside">0</b><span>panel corners off the true roof</span></div>
+    </div>
+    <p class="muted" style="margin-top:10px">The 5-10 cm target holds for the roof plane and most of the outline (edge median
+      <span data-num="edge_median_cm">2.7</span> cm), but the worst outline edges are off by up to a metre where the scan was thin.</p>
+  </section>
+
+  <section class="card">
+    <h2>Interior sample: an office from a laser scan, as a SketchUp export</h2>
+    <figure>
+      <img src="phases/phase3_room.jpg" alt="Inside the scanned office room: walls, floor, furniture and a panel on the back wall" width="1200" height="750">
+      <figcaption>The ETH3D office levelled, walls squared and meshed to about 60k triangles, then shown in the AR page behind tags on its back wall.</figcaption>
+    </figure>
+    <div class="nums" style="margin-top:10px">
+      <div><b data-num="room_size">3.14 x 4.48 m</b><span>floor</span></div>
+      <div><b data-num="room_height">4.05 m</b><span>high</span></div>
+    </div>
+    <div class="actions" style="margin-top:10px">
+      <a class="btn ghost" href="models/office_scan_room.dae" download>.dae (SketchUp import)</a>
+      <a class="btn ghost" href="models/office_scan_room.obj" download>.obj</a>
+      <a class="btn ghost" href="models/office_scan_room.mtl" download>.mtl</a>
+    </div>
+    <p class="muted" style="margin-top:8px">ETH3D data, CC BY-NC-SA 4.0: non-commercial use only.</p>
+  </section>
+
+  <section class="card">
+    <h2>How it works</h2>
+    <ol class="steps">
+      <li>Capture: 40-100 phone photos with heavy overlap, plus tape measurements kept aside for checking.</li>
+      <li>COLMAP finds the camera poses; OpenMVS makes the dense point cloud.</li>
+      <li>Open3D cleans the cloud and fits the roof plane with RANSAC.</li>
+      <li>Scale from AprilTags of known size (or one tape length): photos alone have no metres.</li>
+      <li>CadQuery builds the solids and writes STEP (and DXF) for AutoCAD; the panel layout from Phase 2 runs on the result.</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <h2>Where it stands</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Part</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Scan to roof outline, plane and panel layout; validated on ETH3D</td><td><span class="st done">done</span></td></tr>
+        <tr><td>Interior scan to SketchUp (.dae/.obj)</td><td><span class="st done">done</span></td></tr>
+        <tr><td>Our own rooftop photographed and checked against tape measurements</td><td><span class="st todo">not started</span></td></tr>
+        <tr><td>Rooftop obstacles detected automatically from the scan</td><td><span class="st todo">not started</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <div class="pager">
+    <a href="phase2.html">Phase 2: auto layout on an AutoCAD roof</a>
+    <a href="index.html">All phases</a>
+  </div>
+</div>
+</body>
+</html>

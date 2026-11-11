@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Phase 1: On-site AR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="phases/phase.css">
+</head>
+<body>
+<div class="wrap">
+  <nav class="phases" aria-label="Phases">
+    <a href="index.html">All phases</a>
+    <a href="phase1.html" aria-current="page">Phase 1</a>
+    <a href="phase2.html">Phase 2</a>
+    <a href="phase3.html">Phase 3</a>
+  </nav>
+
+  <header>
+    <p class="kicker">Phase 1</p>
+    <h1>On-site AR: show the customer the panels where they will go</h1>
+    <p class="lead">An architect or installer prints a few AprilTags, lays them on a table, roof or wall, and the phone shows
+      solar panels (or the designer's SketchUp model) locked to them at a known scale, with the power they would make.</p>
+  </header>
+
+  <div class="actions">
+    <a class="btn" href="tagar.html">Open the AR</a>
+    <a class="btn" href="site.html">Open the Site Designer (full size)</a>
+    <a class="btn ghost" href="viewer.html">Customer viewer</a>
+    <a class="btn ghost" href="tags.html">Check your printed tags</a>
+  </div>
+
+  <figure class="card">
+    <img src="phases/phase1_ar.jpg" alt="A 2 by 3 array of solar panels locked to four tags, with the power readout above" width="1200" height="750">
+    <figcaption>tagar.html on a desktop with four simulated tags 1.0 x 0.6 m apart: 6 panels, about
+      <span data-num="kw">2.40</span> kW peak, ~9.6 kWh/day at 5 sun hours.</figcaption>
+  </figure>
+
+  <section class="card">
+    <h2>How it works</h2>
+    <ol class="steps">
+      <li>Print 2, 3 or 4 AprilTags (36h11 family, 160 mm by default) and put them at the corners of where the panels go.</li>
+      <li>Open the AR on an ARCore phone. It finds the tags and fits a rectangle through them; their printed size gives the scale.</li>
+      <li>Type rows and columns: the array fills the rectangle, shows peak kW and kWh/day, and follows the tags if they move.</li>
+      <li>Switch to the BIPV shingle look, tilt the panels on a rack, or place a SketchUp export (.dae, or .obj with its .mtl).</li>
+      <li>Take a photo with the panels composited in and share it with the customer.</li>
+    </ol>
+    <p>For full size on site, the <a href="site.html">Site Designer</a> locks on the first wall's tags, maps the other walls' tags as you walk round,
+      and lets you draw outlines and wall lines or place walls, doors, windows, pergolas, planters, benches and panels. It keeps options A/B/C,
+      a Before view and size labels, takes photos and video, saves the design as JSON (it reopens locked to the same tags), exports GLB,
+      imports a SketchUp model and records tape checks. The <a href="viewer.html">customer viewer</a> opens a saved design in a browser.</p>
+    <p class="muted">Sample files load by default (a SketchUp pergola and a scanned office room), so the page works without imports.
+      Add <code>?samples=0</code> to start empty.</p>
+  </section>
+
+  <section class="card">
+    <h2>Where it stands</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Goal</th><th>Status</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Model stays put</td><td><span class="st part">partly done</span></td><td>Locks to tags and follows them; the Site Designer re-fixes on every mapped tag and keeps an ARCore anchor between fixes. Emulator: about 3 cm after a full lap; not yet measured on a real site.</td></tr>
+        <tr><td>Roughly the right size</td><td><span class="st part">partly done</span></td><td>Scale from the printed tag size. Tape check and <code>scripts/size_check.py</code> report are built; the on-site test plan (docs/size_check.md) has not been run yet.</td></tr>
+        <tr><td>Import designs</td><td><span class="st part">partly done</span></td><td>SketchUp .dae and .obj + .mtl + textures, placed by tags or aligned to a site corner; .skp must be exported first.</td></tr>
+        <tr><td>Customer understands it</td><td><span class="st part">partly done</span></td><td>Power readout, photo and video, options A/B/C, Before view, size labels, customer viewer; no guided walkthrough yet.</td></tr>
+        <tr><td>Drawing tools</td><td><span class="st done">done</span></td><td>Outline slab, wall line with drag-up height, blocks with materials; move, turn, resize, delete, undo.</td></tr>
+        <tr><td>Save and share a design</td><td><span class="st done">done</span></td><td>Design JSON (reopens locked to the tags), GLB export, photo and video share.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <div class="pager">
+    <a href="index.html">All phases</a>
+    <a href="phase2.html">Phase 2: auto layout on an AutoCAD roof</a>
+  </div>
+</div>
+</body>
+</html>

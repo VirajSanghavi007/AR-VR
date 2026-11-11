@@ -38,8 +38,8 @@ def test_run_preview_bat_serves_the_ar_pages():
                 time.sleep(0.1)
         else:
             pytest.fail(f"server never answered: {proc.stdout.read1(4000) if proc.poll() is not None else ''}")
-        assert 'url=tagar.html' in html
-        for page in ("tagar.html", "tags.html"):
+        assert 'href="phase1.html"' in html and 'href="tagar.html"' in html   # the root is the phase menu
+        for page in ("tagar.html", "tags.html", "site.html", "viewer.html"):
             src = urllib.request.urlopen(base + page, timeout=2).read().decode()
             for ref in re.findall(r'(?:src|from)="\.?/?([\w./-]+?\.js)(?:\?[^"]*)?"', src):
                 assert urllib.request.urlopen(base + ref, timeout=2).status == 200, ref

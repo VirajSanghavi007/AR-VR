@@ -858,7 +858,7 @@ $("overlay").addEventListener("beforexrselect", (e) => { if (e.target.closest("b
 // ---------- desktop: the phone emulator ----------
 let emuView = null;
 function redraw() {
-  if (!simulated || !emu || !renderer) return;
+  if (!simulated || !emu || !renderer || !emuView) return;
   camera.projectionMatrix.fromArray(emuView.projectionMatrix);
   camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
   camera.matrixAutoUpdate = false;

@@ -76,7 +76,7 @@ These come from `site.html`'s phone emulator, a virtual phone with shake and tra
 | Check | Result |
 |---|---|
 | Drawn 3 m wall, length | 3.000 m (error under 1 mm) |
-| Drawn wall ends against their true place | 7 to 25 mm |
+| Drawn wall ends against their true place, locked on the first wall's 2 tags | 5 to 222 mm over 8 seeds (5 of 8 under 20 mm, 3 of 8 at 93 to 222 mm: the lock's pose error) |
 | Same wall after save and reopen | 14 to 30 mm |
 | 360 degree walk, 2 laps, 23.5 m, drift 10 mm/m + 0.2 deg/m | corrected max 36 / 32 mm per lap, raw (no correction) 48 / 27 mm |
 

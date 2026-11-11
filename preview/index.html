@@ -2,11 +2,44 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Solar Panel AR</title>
-<meta http-equiv="refresh" content="0; url=tagar.html">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Solar Design Phases</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="phases/phase.css">
 </head>
 <body>
-<p><a href="tagar.html">Open the tabletop solar panel AR</a> · <a href="tags.html">Check your printed tags</a></p>
+<div class="wrap">
+  <header>
+    <p class="kicker">AR / VR solar design prototype</p>
+    <h1>From a phone on site to CAD you can build from</h1>
+    <p class="lead">Three phases, each usable on its own: show panels in AR on site, lay them out on a drawn roof,
+      or make the roof CAD from a scan when there is no drawing.</p>
+  </header>
+
+  <div class="hub">
+    <a class="card" href="phase1.html">
+      <img src="phases/phase1_ar.jpg" alt="" width="1200" height="750">
+      <span class="kicker">Phase 1</span>
+      <h2>On-site AR</h2>
+      <span class="muted">Panels and SketchUp models locked to printed AprilTags, with power estimates.</span>
+    </a>
+    <a class="card" href="phase2.html">
+      <img src="phases/phase2_roof.jpg" alt="" width="1200" height="750">
+      <span class="kicker">Phase 2</span>
+      <h2>AutoCAD roof layout</h2>
+      <span class="muted">Panels packed around obstacles and winter shadows; STEP and a 3D model out.</span>
+    </a>
+    <a class="card" href="phase3.html">
+      <img src="phases/phase3_terrace.jpg" alt="" width="1200" height="750">
+      <span class="kicker">Phase 3</span>
+      <h2>CAD from a scan</h2>
+      <span class="muted">Roof and room geometry from scans, checked against laser ground truth.</span>
+    </a>
+  </div>
+
+  <p class="muted">Straight to the tools: <a href="tagar.html">tabletop AR</a> &middot; <a href="site.html">Site Designer</a> &middot; <a href="tags.html">tag check</a>
+    &middot; <a href="vr.html?phase=2">Phase 2 viewer</a> &middot; <a href="vr.html?phase=3">Phase 3 viewer</a></p>
+</div>
 </body>
 </html>

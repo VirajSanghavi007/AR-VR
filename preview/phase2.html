@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Phase 2: AutoCAD Roof Layout</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="phases/phase.css">
+</head>
+<body>
+<div class="wrap">
+  <nav class="phases" aria-label="Phases">
+    <a href="index.html">All phases</a>
+    <a href="phase1.html">Phase 1</a>
+    <a href="phase2.html" aria-current="page">Phase 2</a>
+    <a href="phase3.html">Phase 3</a>
+  </nav>
+
+  <header>
+    <p class="kicker">Phase 2</p>
+    <h1>Automatic panel layout on a roof drawn in AutoCAD</h1>
+    <p class="lead">Start from the roof as the architect drew it: outline, parapet and everything standing on it. The code keeps
+      panels clear of each obstacle and its winter shadow, packs the rest, and hands back CAD plus a 3D model to walk around in VR or AR.</p>
+  </header>
+
+  <div class="actions">
+    <a class="btn" href="vr.html?phase=2">Open the 3D roof (Orbit, VR, AR)</a>
+    <a class="btn ghost" href="models/rooftop_solar.glb" download>Download the model (.glb)</a>
+  </div>
+
+  <figure class="card">
+    <img src="phases/phase2_roof.jpg" alt="An L-shaped rooftop with a stair room, store and two water tanks, solar panels between them" width="1200" height="750">
+    <figcaption>vr.html?phase=2: the L-shaped roof with stair room, store and two tanks, and the panels that fit around them.</figcaption>
+  </figure>
+
+  <section class="card">
+    <h2>Key numbers</h2>
+    <div class="nums">
+      <div><b data-num="roof">12 x 8 m</b><span>roof, L-shaped</span></div>
+      <div><b data-num="panels">12</b><span>panels placed</span></div>
+      <div><b data-num="kw">6.6 kW</b><span>at 550 W per panel</span></div>
+      <div><b data-num="features">4</b><span>obstacles: stair, store, 2 tanks</span></div>
+      <div><b>15&deg;</b><span>panel tilt</span></div>
+      <div><b>19&deg; N</b><span>latitude for winter shadows</span></div>
+    </div>
+    <p class="muted" style="margin-top:10px">The same 12 x 8 m roof with nothing on it takes 27 panels (about 14.9 kW): the obstacles and their
+      shadows cost more than half the space. The measurements are placeholders until a real drawing comes in.</p>
+  </section>
+
+  <section class="card">
+    <h2>How it works</h2>
+    <ol class="steps">
+      <li>Read the roof from the AutoCAD drawing: outline (with the L-shaped notch), slab, parapet height, and each structure on it.</li>
+      <li>Grow every obstacle by its footprint plus the shadow it throws at winter noon (sun altitude from the latitude), and keep a setback from the parapet.</li>
+      <li>Fill what is left with tilted panels in rows spaced so they do not shade each other.</li>
+      <li>Export a STEP solid for AutoCAD, a GLB for the 3D viewer, and a JSON sidecar the viewer reads for the roof details.</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <h2>Where it stands</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Part</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Layout around obstacles and winter shadows</td><td><span class="st done">done</span></td></tr>
+        <tr><td>STEP, GLB and JSON export; 3D viewer with Cardboard VR and AR</td><td><span class="st done">done</span></td></tr>
+        <tr><td>Reading a real customer drawing (DXF/DWG) instead of typed dimensions</td><td><span class="st todo">not started</span></td></tr>
+        <tr><td>Checked against a real roof</td><td><span class="st todo">not started</span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <div class="pager">
+    <a href="phase1.html">Phase 1: on-site AR</a>
+    <a href="phase3.html">Phase 3: CAD from a scan</a>
+  </div>
+</div>
+</body>
+</html>
