@@ -1,0 +1,1021 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Site Designer AR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<style>
+:root {
+  --bg: #eef1f4; --surface: #ffffff; --fg: #16202b; --muted: #5b6876; --line: #d5dce3;
+  --accent: #1d3f8f; --accent-fg: #ffffff;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f151c; --surface: #17202a; --fg: #e6ecf2; --muted: #93a1b0; --line: #2a3644;
+  --accent: #7ea2ff; --accent-fg: #0b1220; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f151c; --surface: #17202a; --fg: #e6ecf2; --muted: #93a1b0; --line: #2a3644;
+  --accent: #7ea2ff; --accent-fg: #0b1220; color-scheme: dark }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--sans); }
+.wrap { max-width: 640px; margin: 0 auto; padding: 20px 16px 28px; display: flex; flex-direction: column; gap: 16px; }
+h1 { font-size: 1.4rem; font-weight: 600; margin: 0; }
+a { color: var(--accent); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+ol { margin: 0; padding-left: 20px; }
+li + li { margin-top: 4px; }
+.go { border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-fg); font: 600 1rem var(--sans); padding: 13px; cursor: pointer; width: 100%; }
+.go.alt { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+.go:disabled { opacity: .45; cursor: not-allowed; }
+.go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.note { color: var(--muted); font-size: .85rem; margin: 0; }
+.row { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
+label.f { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; color: var(--muted); }
+label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); min-width: 0; }
+
+/* In-AR overlay (WebXR dom-overlay) */
+#overlay { display: none; position: fixed; inset: 0; z-index: 1; font-family: var(--sans); }
+#overlay.on { display: block; }
+#touch { position: absolute; inset: 0; touch-action: none; }
+.hud { position: absolute; left: 12px; right: 12px; top: max(12px, env(safe-area-inset-top));
+       background: rgba(12, 18, 26, .8); color: #fff; border-radius: 10px; padding: 8px 12px; font-size: .92rem; }
+.hud small { display: block; color: #b9c4d0; font-family: var(--mono); font-size: .75rem; }
+.dock { position: absolute; left: 8px; right: 8px; bottom: max(10px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 6px; }
+.tabs, .tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.tabs button, .tools button, .tools select, .tools input { flex: 1 1 auto; min-width: 54px; border: 0; border-radius: 8px; padding: 10px 6px;
+  font: 600 .82rem var(--sans); background: rgba(12, 18, 26, .82); color: #fff; }
+.tools input { font-family: var(--mono); min-width: 70px; max-width: 90px; }
+.tabs button[aria-pressed="true"], .tools button[aria-pressed="true"] { background: #2f6bff; }
+.tools button.warn { background: rgba(150, 30, 30, .85); }
+.tools[hidden] { display: none; }
+#rec-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #ff3b30; margin-right: 6px; vertical-align: middle; }
+#shot { position: absolute; inset: 0; background: rgba(0,0,0,.85); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 16px; }
+#shot[hidden] { display: none; }
+#shot img, #shot video { max-width: 100%; max-height: 70vh; border-radius: 8px; }
+#shot .tools { width: 100%; max-width: 420px; }
+#shot a { text-decoration: none; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Site designer (Phase 1)</h1>
+  <p class="note">Sketch a design on the real site in AR. Printed AprilTags round the site keep it locked in place from every side, a customer walks round it, flips between options A, B and C, and you save it to reopen or share. Other pages: <a href="tagar.html">tabletop AR</a>, <a href="viewer.html">design viewer</a>, <a href="tags.html">tag check</a>.</p>
+  <div class="card">
+    <ol>
+      <li>Print 36h11 tags (<code>scripts/make_tags.py</code>), tape 2 or more on each wall about 1.2-1.5 m up, at least 2 m apart round the site. Each id once.</li>
+      <li>Start AR, aim at the first wall's tags and press <b>Lock</b>. Keep <b>Map</b> on and walk round once: every new tag is added to the map.</li>
+      <li>Aim at the floor so the floor is found, then draw: tap corners for an outline or a wall line, or place blocks from the library.</li>
+      <li>Show: before/after, options A/B/C, size labels, photo and video. Save the design to reopen it locked to the same tags.</li>
+    </ol>
+    <div class="row">
+      <label class="f">Tag size (black square, mm)<input id="size" inputmode="decimal" value="160"></label>
+      <label class="f">Open a saved design<input id="open-start" type="file" accept=".json,application/json"></label>
+    </div>
+    <button class="go" id="start" disabled>Start AR</button>
+    <p class="note" id="status">Checking for AR support...</p>
+  </div>
+</div>
+
+<div id="overlay">
+  <div id="touch"></div>
+  <div class="hud" id="hud">Aim at the tags</div>
+  <div class="dock">
+    <div class="tools" id="t-setup">
+      <button id="b-lock">Lock</button>
+      <button id="b-map" aria-pressed="true">Map</button>
+      <button id="b-floor">Floor here</button>
+      <button id="b-reset" class="warn">New map</button>
+    </div>
+    <div class="tools" id="t-draw" hidden>
+      <button id="b-outline">Outline</button>
+      <button id="b-line">Wall line</button>
+      <select id="b-block" aria-label="Add a block">
+        <option value="">+ Block</option>
+      </select>
+      <button id="b-done" hidden>Done</button>
+      <button id="b-cancel" hidden class="warn">Cancel</button>
+    </div>
+    <div class="tools" id="t-edit" hidden>
+      <button id="b-left" aria-label="Turn left">⟲</button>
+      <button id="b-right" aria-label="Turn right">⟳</button>
+      <button id="b-drag" aria-pressed="false">Drag: move</button>
+      <button id="b-w-" >W −</button><button id="b-w+">W +</button>
+      <button id="b-h-">H −</button><button id="b-h+">H +</button>
+      <button id="b-d-">D −</button><button id="b-d+">D +</button>
+      <button id="b-mat">Material</button>
+      <button id="b-del" class="warn">Delete</button>
+    </div>
+    <div class="tools" id="t-show" hidden>
+      <button id="b-before" aria-pressed="false">Before</button>
+      <button id="b-A" aria-pressed="true">A</button><button id="b-B">B</button><button id="b-C">C</button>
+      <button id="b-copy">Copy to next</button>
+      <button id="b-labels" aria-pressed="false">Sizes</button>
+      <button id="b-photo">Photo</button>
+      <button id="b-video">Video</button>
+    </div>
+    <div class="tools" id="t-file" hidden>
+      <button id="b-save">Save design</button>
+      <label class="tools" style="flex:1 1 auto;padding:0"><button id="b-open-btn" type="button" style="width:100%">Open design</button></label>
+      <input id="b-open" type="file" accept=".json,application/json" hidden>
+      <button id="b-glb">GLB</button>
+      <button id="b-import">Import model</button>
+      <input id="b-model" type="file" accept=".glb,.gltf,.dae,.obj,.mtl,.png,.jpg,.jpeg" multiple hidden>
+      <button id="b-align">Align model</button>
+      <input id="b-tape" inputmode="decimal" placeholder="tape m" aria-label="Tape length in metres">
+      <button id="b-check">Tape check</button>
+    </div>
+    <div class="tabs">
+      <button id="m-setup" aria-pressed="true">Setup</button>
+      <button id="m-draw">Draw</button>
+      <button id="m-show">Show</button>
+      <button id="m-file">File</button>
+      <button id="b-undo">Undo</button>
+      <button id="b-exit">Exit</button>
+    </div>
+  </div>
+  <div id="shot" hidden>
+    <img id="shot-img" alt="Photo of the design on site">
+    <video id="shot-vid" controls playsinline hidden></video>
+    <div class="tools">
+      <a id="shot-save"><button style="width:100%">Save</button></a>
+      <button id="shot-share" hidden>Share</button>
+      <button id="shot-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<script src="vendor/js-aruco2/cv.js"></script>
+<script src="vendor/js-aruco2/aruco.js"></script>
+<script src="tag36h11.js?v=1"></script>
+<script type="module">
+import * as THREE from "three";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
+import { PhoneEmulator, rng } from "./phoneemu.js?v=3";
+import { pixelRay, rayPlane, downsample, tagCorners3D, invert4, transform } from "./tagrect.js?v=7";
+import { mergeNested } from "./tagcheck.js?v=2";
+import { composite } from "./snap.js?v=2";
+import { grainFor, cameraLookShader, smoothLight, lightProbeOptions, twistDelta } from "./panel.js?v=9";
+import * as TM from "./tagmap.js?v=2";
+import * as B from "./blocks.js?v=2";
+import { materialSet, designGroup, objectMesh, labelSprite, readModel, localBox, sunAndSky } from "./build3d.js?v=2";
+import { pickModelFiles } from "./model.js?v=4";
+
+const TICK_MS = 250, NEED_SIGHTINGS = 3, REG_GRACE_TICKS = 120, TURN = Math.PI / 12, SIZE_STEP = 0.1, VIDEO_FPS = 10;
+const $ = (id) => document.getElementById(id);
+
+// ---------- state ----------
+// map: tagmap.js map (room frame); wfr: worldFromRoom now (16 numbers) or null until a mapped tag is seen.
+let tagSize = 0.16, map = null, wfr = null, mapping = true, pending = {}, tick = 0, fixTick = -1e9, lastFix = null, lastSeenIds = [];
+let anchor = null, anchorFromRoom = null, anchorBusy = false;
+let design = B.emptyDesign(), sel = -1, tool = null, dragMode = "move", labels = false, before = false, mode = "setup";
+let checks = [], imported = null, alignStep = null;
+const hist = new B.History();
+hist.push(design);
+const objs = () => design.options[design.active];
+
+// ---------- scene ----------
+let renderer, scene, camera, roomRoot, designRoot, draftRoot, selBox, modelRoot, sun, hemi, mat, matPlain;
+let session = null, refSpace = null, hitSource = null, binding = null, fb = null, pixels = null, lightProbe = null;
+let lastProj = null, lastPose = null, lastHit = null, lastDetect = -1e9, flipY = true, flipKnown = false, detector = null;
+let emu = null, emuR = null, emuCamera = null, simulated = false;
+const SUN = { color: [1, 1, 1], intensity: 1.8 };
+let light = { ...SUN };
+const camLook = { grainAmt: { value: grainFor(SUN.intensity) }, grainSeed: { value: 0 }, vignetteAmt: { value: 0.45 }, grainRes: { value: new THREE.Vector2(1, 1) } };
+function cameraLook(m) {
+  m.onBeforeCompile = (s) => { Object.assign(s.uniforms, camLook); s.fragmentShader = cameraLookShader(s.fragmentShader); };
+  m.customProgramCacheKey = () => "camlook";
+  return m;
+}
+
+function buildScene() {
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: false });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.xr.enabled = true;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.25;
+  renderer.xr.setFramebufferScaleFactor(0.8);
+  document.body.appendChild(renderer.domElement);
+  scene = new THREE.Scene();
+  scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+  camera = new THREE.PerspectiveCamera();
+  mat = materialSet(cameraLook);
+  matPlain = materialSet();
+  // everything designed lives in the room frame with the floor at y = 0: roomRoot = worldFromRoom x floor shift
+  roomRoot = new THREE.Group();
+  roomRoot.matrixAutoUpdate = false;
+  roomRoot.visible = false;
+  scene.add(roomRoot);
+  ({ hemi, sun } = sunAndSky(8, SUN.intensity));
+  roomRoot.add(sun, sun.target);
+  scene.add(hemi);
+  const catcher = new THREE.Mesh(new THREE.PlaneGeometry(40, 40).rotateX(-Math.PI / 2), new THREE.ShadowMaterial({ opacity: 0.35 }));
+  catcher.position.y = 0.001;
+  catcher.receiveShadow = true;
+  designRoot = new THREE.Group(); draftRoot = new THREE.Group(); modelRoot = new THREE.Group();
+  modelRoot.matrixAutoUpdate = false;
+  selBox = new THREE.Box3Helper(new THREE.Box3(), 0x2f6bff);
+  selBox.visible = false;
+  roomRoot.add(catcher, designRoot, draftRoot, modelRoot, selBox);
+  rebuild();
+}
+
+function fillScreen() {
+  Object.assign(renderer.domElement.style, { position: "fixed", inset: "0", zIndex: "0" });
+  renderer.setSize(innerWidth, innerHeight);
+}
+
+// The room frame on screen: worldFromRoom with the floor at y = 0.
+const floorY = () => (map && Number.isFinite(map.floorY) ? map.floorY : null);
+function placeRoom() {
+  const ok = !!wfr && floorY() !== null;
+  roomRoot.visible = ok;
+  if (ok) roomRoot.matrix.fromArray(TM.mul4(wfr, TM.yawMatrix(0, [0, floorY(), 0])));
+  roomRoot.matrixWorldNeedsUpdate = true;
+}
+
+// ---------- the design on screen ----------
+function rebuild() {
+  if (!designRoot) return;
+  for (const c of [...designRoot.children]) designRoot.remove(c);
+  const g = designGroup(objs(), mat, { labels });
+  designRoot.add(...g.children);
+  designRoot.visible = modelRoot.visible = !before;
+  showSel();
+  drawDraft();
+  redraw();
+}
+function showSel() {
+  const o = objs()[sel];
+  selBox.visible = !!o && !before;
+  if (o) {
+    const g = designRoot.children.find((c) => c.userData.id === o.id);
+    if (g) { selBox.box.makeEmpty(); g.updateMatrixWorld(true); const inv = roomRoot.matrixWorld.clone().invert(); g.traverse((m) => { if (m.isMesh) selBox.box.union(new THREE.Box3().setFromObject(m).applyMatrix4(inv)); }); }
+  }
+  $("t-edit").hidden = !(mode === "draw" && o && !tool);
+  hud();
+}
+// commit a change: undo point + redraw
+function commit() { hist.push(design); rebuild(); }
+function setObj(i, o) { design = { ...design, options: { ...design.options, [design.active]: objs().map((x, k) => (k === i ? o : x)) } }; }
+function addObj(o) { design = { ...design, options: { ...design.options, [design.active]: [...objs(), o] } }; sel = objs().length - 1; }
+
+// the corners being drawn: dots, sides, and each side's length
+function drawDraft() {
+  if (!draftRoot) return;
+  for (const c of [...draftRoot.children]) draftRoot.remove(c);
+  if (!tool || !tool.pts || !tool.pts.length) return;
+  const pts = tool.pts, dotMat = new THREE.MeshBasicMaterial({ color: 0x2f6bff, depthTest: false });
+  for (const [x, z] of pts) { const d = new THREE.Mesh(new THREE.SphereGeometry(0.04, 12, 8), dotMat); d.position.set(x, 0.02, z); d.renderOrder = 9; draftRoot.add(d); }
+  if (pts.length > 1) {
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts.map(([x, z]) => new THREE.Vector3(x, 0.02, z))),
+                                new THREE.LineBasicMaterial({ color: 0x2f6bff, depthTest: false }));
+    line.renderOrder = 9;
+    draftRoot.add(line);
+    for (let i = 1; i < pts.length; i++) {
+      const [a, b] = [pts[i - 1], pts[i]], s = labelSprite(B.fmtM(Math.hypot(b[0] - a[0], b[1] - a[1])), 0.08);
+      s.position.set((a[0] + b[0]) / 2, 0.12, (a[1] + b[1]) / 2);
+      draftRoot.add(s);
+    }
+  }
+}
+
+// ---------- HUD and buttons ----------
+const TABS = ["setup", "draw", "show", "file"];
+function setMode(m) {
+  mode = m;
+  for (const t of TABS) { $("m-" + t).setAttribute("aria-pressed", String(t === m)); $("t-" + t).hidden = t !== m; }
+  if (m !== "draw") endTool();
+  showSel();
+}
+function trackLine() {
+  if (!map) return "No map yet";
+  const n = Object.keys(map.tags).length, age = tick - fixTick;
+  const fix = lastFix && age < 8 ? `locked on tag${lastFix.used.length > 1 ? "s" : ""} ${lastFix.used.join(", ")} (fit ${(lastFix.rms * 1000).toFixed(0)} mm)` : wfr ? "held by tracking (no mapped tag in view)" : "aim at a mapped tag";
+  return `${n} tag${n === 1 ? "" : "s"} mapped${mapping ? ", mapping on" : ""} · ${fix}`;
+}
+let hudMsg = "";
+function hud(msg) {
+  if (msg !== undefined) hudMsg = msg;
+  const o = objs()[sel];
+  let main = hudMsg;
+  if (!main) {
+    if (!map) main = lastSeenIds.length ? `Tags ${lastSeenIds.join(", ")} in view: press Lock` : "Aim at the first wall's tags";
+    else if (floorY() === null) main = "Aim at the floor so it is found (or press Floor here)";
+    else if (tool && tool.kind !== "block") main = toolHint();
+    else if (alignStep) main = alignStep.hint;
+    else if (o) main = `${B.objectName(o)}: ${B.sizeLabel(o)} · ${B.MATERIALS[o.mat].name}`;
+    else if (mode === "draw") main = "Outline, Wall line or + Block, or tap an object to edit it";
+    else if (mode === "show") main = `${design.names[design.active]}: ${objs().length} object${objs().length === 1 ? "" : "s"}${before ? " (hidden: before)" : ""}`;
+    else main = "Walk round so every tag is mapped, then Draw";
+  }
+  $("hud").innerHTML = `${main}<small>${trackLine()}</small>`;
+}
+function toolHint() {
+  const n = tool.pts.length, name = tool.kind === "slab" ? "outline" : "wall line";
+  if (!n) return `Tap the first corner of the ${name}`;
+  return tool.kind === "slab" ? `${n} corner${n === 1 ? "" : "s"}: tap the next, tap the first to close, or Done` : `${n} point${n === 1 ? "" : "s"}: tap the next, Done to finish`;
+}
+function endTool() { tool = null; $("b-done").hidden = $("b-cancel").hidden = true; $("b-block").value = ""; drawDraft(); }
+function startDraw(kind) { sel = -1; tool = { kind, pts: [] }; $("b-done").hidden = $("b-cancel").hidden = false; showSel(); drawDraft(); redraw(); }
+
+// a finished outline or wall line: pulled up to its default height, then a vertical drag sets the height
+function finishDrawn() {
+  const min = tool.kind === "slab" ? 3 : 2;
+  if (tool.pts.length < min) { hud(`Needs ${min} or more points`); return; }
+  const o = B.newDrawn(tool.kind, tool.pts);
+  endTool();
+  addObj(o);
+  dragMode = "height";
+  $("b-drag").textContent = "Drag: height"; $("b-drag").setAttribute("aria-pressed", "true");
+  commit();
+  hud("Drag up or down to set the height, then tap to finish");
+  hudMsg = "";
+}
+
+// ---------- screen to room ----------
+// screen pixel -> floor point [x, z] (room metres), through the current camera
+function floorPoint(cx, cy) {
+  if (!wfr || floorY() === null || !lastProj) return null;
+  const ray = pixelRay(cx, cy, innerWidth, innerHeight, lastProj, lastPose);
+  const hit = rayPlane(ray, transform(wfr, [0, floorY(), 0]), [0, 1, 0]);
+  if (!hit) return null;
+  const q = transform(invert4(wfr), hit);
+  return [q[0], q[2]];
+}
+// room point [x, y, z] (floor at y = 0) -> screen pixel
+function screenOf(p) {
+  scene.updateMatrixWorld(true);
+  const v = roomRoot.localToWorld(new THREE.Vector3(...p)).project(camera);
+  return [((v.x + 1) / 2) * innerWidth, ((1 - v.y) / 2) * innerHeight];
+}
+// the camera's position in the room (floor at y = 0)
+function eyeRoom() {
+  if (!wfr || !lastPose) return null;
+  const q = transform(invert4(wfr), [lastPose[12], lastPose[13], lastPose[14]]);
+  return [q[0], q[1] - (floorY() || 0), q[2]];
+}
+
+// ---------- taps and drags ----------
+function tap(cx, cy) {
+  if (alignStep) return alignTap(cx, cy);
+  const p = floorPoint(cx, cy);
+  if (!p) { hud(wfr ? "Aim at the floor" : "Not locked yet: aim at a mapped tag"); hudMsg = ""; return; }
+  if (dragMode === "height" && sel >= 0) { dragMode = "move"; $("b-drag").textContent = "Drag: move"; $("b-drag").setAttribute("aria-pressed", "false"); }
+  if (tool && tool.kind !== "block") {
+    const pts = tool.pts, q = B.snapPoint(p, pts[pts.length - 1] || null, pts[pts.length - 2] || null);
+    if (tool.kind === "slab" && B.closesOutline(pts, p)) return finishDrawn();
+    pts.push(q);
+    drawDraft(); hud(); redraw();
+    return;
+  }
+  if (tool && tool.kind === "block") {
+    const e = eyeRoom(), yaw = e ? Math.round(Math.atan2(e[0] - p[0], e[2] - p[1]) / TURN) * TURN : 0;
+    const q = B.snapPoint(p);
+    addObj(B.newBlock(tool.type, q[0], q[1], yaw));
+    endTool();
+    commit();
+    return;
+  }
+  sel = B.objectAt(objs(), p);
+  showSel(); redraw();
+}
+
+const pointers = new Map();
+let gesture = null;
+$("touch").addEventListener("pointerdown", (e) => {
+  $("touch").setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, [e.clientX, e.clientY]);
+  const o = objs()[sel];
+  if (pointers.size === 2 && o) { const [a, b] = [...pointers.values()]; gesture = { twist: [floorPoint(...a), floorPoint(...b)], o0: o, moved: 99 }; return; }
+  const p = floorPoint(e.clientX, e.clientY);
+  gesture = { x0: e.clientX, y0: e.clientY, at: performance.now(), moved: 0, o0: o };
+  if (o && !tool && dragMode === "height") gesture.height = true;
+  else if (o && !tool && p && B.hitsObject(o, p, 0.15)) gesture.drag = [o.x - p[0], o.z - p[1]];
+});
+$("touch").addEventListener("pointermove", (e) => {
+  if (!pointers.has(e.pointerId) || !gesture) return;
+  pointers.set(e.pointerId, [e.clientX, e.clientY]);
+  if (gesture.twist && pointers.size === 2) {
+    const [a, b] = [...pointers.values()].map((s) => floorPoint(...s));
+    if (a && b && gesture.twist[0] && gesture.twist[1]) { setObj(sel, B.turned(gesture.o0, twistDelta(gesture.twist[0], gesture.twist[1], a, b))); rebuild(); }
+    return;
+  }
+  gesture.moved = Math.max(gesture.moved, Math.hypot(e.clientX - gesture.x0, e.clientY - gesture.y0));
+  if (gesture.moved < 10) return;
+  if (gesture.height) { setObj(sel, B.resized(gesture.o0, { h: B.dragHeight(gesture.o0.h, gesture.y0 - e.clientY) })); rebuild(); }
+  else if (gesture.drag) {
+    const p = floorPoint(e.clientX, e.clientY);
+    if (p) { const q = B.snapPoint([p[0] + gesture.drag[0], p[1] + gesture.drag[1]], null, null, { step: 0.01 }); setObj(sel, B.moved(gesture.o0, q[0], q[1])); rebuild(); }
+  }
+});
+function release(e) {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.delete(e.pointerId);
+  if (!gesture || pointers.size) return;
+  const g = gesture;
+  gesture = null;
+  if (g.moved < 10 && performance.now() - g.at < 600) tap(e.clientX, e.clientY);
+  else if (g.height || g.drag || g.twist) commit();
+}
+$("touch").addEventListener("pointerup", release);
+$("touch").addEventListener("pointercancel", release);
+
+// ---------- the edit buttons ----------
+const edit = (f) => () => { const o = objs()[sel]; if (!o) return; setObj(sel, f(o)); commit(); };
+$("b-left").onclick = edit((o) => B.turned(o, TURN));
+$("b-right").onclick = edit((o) => B.turned(o, -TURN));
+for (const [k, d] of [["w", -1], ["w", 1], ["h", -1], ["h", 1], ["d", -1], ["d", 1]])
+  $(`b-${k}${d < 0 ? "-" : "+"}`).onclick = edit((o) => B.resized(o, { [k]: Math.round((o[k] + d * SIZE_STEP) * 100) / 100 }));
+$("b-mat").onclick = edit((o) => ({ ...o, mat: B.nextMaterial(o.mat) }));
+$("b-del").onclick = () => { if (sel < 0) return; design = { ...design, options: { ...design.options, [design.active]: objs().filter((_, i) => i !== sel) } }; sel = -1; commit(); };
+$("b-drag").onclick = () => {
+  dragMode = dragMode === "move" ? "height" : "move";
+  $("b-drag").textContent = `Drag: ${dragMode}`; $("b-drag").setAttribute("aria-pressed", String(dragMode === "height"));
+};
+$("b-undo").onclick = () => {
+  if (tool && tool.pts && tool.pts.length) { tool.pts.pop(); drawDraft(); hud(); redraw(); return; }
+  const s = hist.undo();
+  if (!s) { hud("Nothing to undo"); hudMsg = ""; return; }
+  design = s; sel = -1; rebuild();
+};
+$("b-outline").onclick = () => startDraw("slab");
+$("b-line").onclick = () => startDraw("walls");
+for (const [k, b] of Object.entries(B.BLOCKS)) { const o = document.createElement("option"); o.value = k; o.textContent = b.name; $("b-block").appendChild(o); }
+$("b-block").onchange = () => { const t = $("b-block").value; if (!t) return; sel = -1; tool = { kind: "block", type: t }; $("b-cancel").hidden = false; hud(`Tap the floor where the ${B.BLOCKS[t].name.toLowerCase()} goes`); hudMsg = ""; showSel(); };
+$("b-done").onclick = () => { if (tool && tool.pts) finishDrawn(); };
+$("b-cancel").onclick = () => { endTool(); hud(); redraw(); };
+for (const t of TABS) $("m-" + t).onclick = () => setMode(t);
+
+// ---------- customer view ----------
+function chooseOption(k) {
+  design = { ...design, active: k };
+  sel = -1;
+  for (const o of B.OPTIONS) $("b-" + o).setAttribute("aria-pressed", String(o === k));
+  rebuild();
+}
+for (const k of B.OPTIONS) $("b-" + k).onclick = () => chooseOption(k);
+$("b-copy").onclick = () => {
+  const to = B.OPTIONS[(B.OPTIONS.indexOf(design.active) + 1) % B.OPTIONS.length];
+  design = B.copyOption(design, design.active, to);
+  commit();
+  chooseOption(to);
+  hud(`${design.names[to]} is now a copy: change it in Draw`); hudMsg = "";
+};
+$("b-before").onclick = () => { before = !before; $("b-before").setAttribute("aria-pressed", String(before)); $("b-before").textContent = before ? "After" : "Before"; rebuild(); };
+$("b-labels").onclick = () => { labels = !labels; $("b-labels").setAttribute("aria-pressed", String(labels)); rebuild(); };
+
+// ---------- camera image, photo and video ----------
+function readCamera(frame, view) {
+  if (emuCamera) return emuCamera(view);
+  const gl = renderer.getContext(), tex = binding && binding.getCameraImage && binding.getCameraImage(view.camera);
+  const w = view.camera && view.camera.width, h = view.camera && view.camera.height;
+  if (!tex || !w || !h) return null;
+  if (!pixels || pixels.length !== w * h * 4) pixels = new Uint8Array(w * h * 4);
+  fb = fb || gl.createFramebuffer();
+  const prev = gl.getParameter(gl.FRAMEBUFFER_BINDING), target = renderer.getRenderTarget();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
+  renderer.resetState();
+  renderer.setRenderTarget(target);
+  return { w, h };
+}
+// camera image + the design rendered off screen from the same view: top-down RGBA, at most maxW wide
+function compositeFrame(frame, view, maxW = 4096) {
+  const cam = readCamera(frame, view);
+  if (!cam) return null;
+  const { w, h } = cam, camPx = pixels.slice();
+  const shotCam = new THREE.PerspectiveCamera();
+  shotCam.projectionMatrix.fromArray(view.projectionMatrix);
+  shotCam.projectionMatrixInverse.copy(shotCam.projectionMatrix).invert();
+  shotCam.matrixAutoUpdate = false;
+  shotCam.matrixWorld.fromArray(view.transform.matrix);
+  shotCam.matrixWorldInverse.copy(shotCam.matrixWorld).invert();
+  const rt = new THREE.WebGLRenderTarget(w, h);
+  rt.texture.colorSpace = THREE.SRGBColorSpace;
+  const xr = renderer.xr.enabled, bg = scene.background, sb = selBox.visible, dr = draftRoot.visible;
+  const prevTarget = renderer.getRenderTarget(), prevColor = renderer.getClearColor(new THREE.Color()), prevAlpha = renderer.getClearAlpha();
+  renderer.xr.enabled = false; scene.background = null; selBox.visible = false; draftRoot.visible = false;
+  const res = camLook.grainRes.value.clone();
+  camLook.grainRes.value.set(w, h);
+  renderer.setRenderTarget(rt); renderer.setClearColor(0x000000, 0); renderer.clear();
+  renderer.render(scene, shotCam);
+  camLook.grainRes.value.copy(res);
+  const scenePx = new Uint8Array(w * h * 4);
+  renderer.readRenderTargetPixels(rt, 0, 0, w, h, scenePx);
+  renderer.setRenderTarget(prevTarget); renderer.setClearColor(prevColor, prevAlpha);
+  renderer.xr.enabled = xr; scene.background = bg; selBox.visible = sb; draftRoot.visible = dr;
+  rt.dispose();
+  return { rgba: composite(camPx, scenePx, w, h, flipY), w, h };
+}
+const captionText = () => `${design.names[design.active]}${before ? " (before)" : ""} · ${objs().length} object${objs().length === 1 ? "" : "s"} · site design preview`;
+function drawCaption(g, w, h) {
+  const fs = Math.max(12, Math.round(w / 34)), band = fs * 2.2;
+  g.fillStyle = "rgba(0,0,0,.6)"; g.fillRect(0, h - band, w, band);
+  g.fillStyle = "#fff"; g.font = `600 ${fs}px sans-serif`; g.textBaseline = "middle";
+  g.fillText(captionText(), fs * 0.8, h - band / 2, w - fs * 1.6);
+}
+let shotUrl = null, shotFile = null, wantShot = false;
+function showFile(blob, name, isVideo) {
+  if (shotUrl) URL.revokeObjectURL(shotUrl);
+  shotUrl = URL.createObjectURL(blob);
+  shotFile = new File([blob], name, { type: blob.type });
+  $("shot-img").hidden = isVideo; $("shot-vid").hidden = !isVideo;
+  if (isVideo) $("shot-vid").src = shotUrl; else $("shot-img").src = shotUrl;
+  $("shot-save").href = shotUrl; $("shot-save").download = name;
+  $("shot-share").hidden = !(navigator.canShare && navigator.canShare({ files: [shotFile] }));
+  $("shot").hidden = false;
+}
+const stamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+function takeShot(frame, view) {
+  wantShot = false;
+  const f = compositeFrame(frame, view);
+  if (!f) { hud("No camera image for the photo (needs Chrome 107+ with ARCore)"); hudMsg = ""; return null; }
+  const c = document.createElement("canvas"), g = c.getContext("2d");
+  c.width = f.w; c.height = f.h;
+  g.putImageData(new ImageData(f.rgba, f.w, f.h), 0, 0);
+  drawCaption(g, f.w, f.h);
+  const name = `site-design-${stamp()}.png`;
+  c.toBlob((b) => showFile(b, name, false), "image/png");
+  return { w: f.w, h: f.h, name, caption: captionText() };
+}
+$("b-photo").onclick = () => { wantShot = true; if (simulated) emuFrameNow(); };
+$("shot-close").onclick = () => { $("shot").hidden = true; };
+$("shot-share").onclick = () => navigator.share({ files: [shotFile], title: "Site design preview" }).catch(() => {});
+
+// Video: composite frames (camera + design) drawn VIDEO_FPS times a second on a canvas that MediaRecorder records.
+let rec = null;
+function startVideo() {
+  if (!window.MediaRecorder) { hud("This browser cannot record video"); hudMsg = ""; return false; }
+  const type = ["video/mp4;codecs=avc1", "video/webm;codecs=vp9", "video/webm"].find((t) => MediaRecorder.isTypeSupported(t)) || "";
+  // the recorder starts on the first frame, once the canvas has its final size (resizing a recorded canvas stalls it)
+  rec = { c: document.createElement("canvas"), mr: null, track: null, chunks: [], last: 0, frames: 0, type: type || "video/webm", mime: type };
+  rec.g = rec.c.getContext("2d");
+  $("b-video").innerHTML = '<span id="rec-dot"></span>Stop';
+  return true;
+}
+function startRecorder(r) {
+  const stream = r.c.captureStream(0);                          // frames pushed by hand with requestFrame()
+  r.track = stream.getVideoTracks()[0];
+  r.mr = new MediaRecorder(stream, r.mime ? { mimeType: r.mime, videoBitsPerSecond: 4e6 } : {});
+  r.type = r.mr.mimeType || r.type;
+  r.mr.ondataavailable = (e) => { if (e.data.size) r.chunks.push(e.data); };
+  r.mr.start(500);
+}
+function videoFrame(frame, view, now) {
+  if (!rec || now - rec.last < 1000 / VIDEO_FPS) return;
+  rec.last = now;
+  const f = compositeFrame(frame, view, 1280);
+  if (!f) return;
+  if (!rec.mr) { rec.c.width = f.w; rec.c.height = f.h; }
+  rec.g.putImageData(new ImageData(f.rgba, f.w, f.h), 0, 0);
+  drawCaption(rec.g, f.w, f.h);
+  if (!rec.mr) startRecorder(rec);
+  rec.track.requestFrame();
+  rec.frames++;
+}
+function stopVideo() {
+  return new Promise((done) => {
+    if (!rec) return done(null);
+    const r = rec;
+    rec = null;
+    $("b-video").textContent = "Video";
+    if (!r.mr) { hud("No frames recorded"); hudMsg = ""; return done(null); }
+    r.mr.onstop = () => {
+      const blob = new Blob(r.chunks, { type: r.type }), name = `site-design-${stamp()}.${r.type.includes("mp4") ? "mp4" : "webm"}`;
+      showFile(blob, name, true);
+      done({ bytes: blob.size, frames: r.frames, type: r.type, name });
+    };
+    r.mr.stop();
+  });
+}
+$("b-video").onclick = () => { if (rec) stopVideo(); else startVideo(); };
+
+// ---------- save, open, export ----------
+function download(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+function designFile() {
+  const extra = { checks };
+  if (imported) extra.model = { name: imported.name, units: imported.units, align: imported.align };
+  return B.designRecord(design, map && TM.mapRecord(map), extra);
+}
+$("b-save").onclick = () => { const r = designFile(); download(new Blob([JSON.stringify(r, null, 1)], { type: "application/json" }), B.designFileName()); hud("Design saved"); hudMsg = ""; };
+// A saved design: its tag map replaces the one in use, so the design comes back where it was as soon as one of its tags is seen.
+function openDesign(src) {
+  const { design: d, map: m, record } = B.parseDesign(src);
+  design = d; sel = -1; checks = record.checks || [];
+  if (m) { map = TM.parseMap(m); tagSize = map.size; wfr = null; lastFix = null; anchorFromRoom = null; mapping = false; $("b-map").setAttribute("aria-pressed", "false"); }
+  hist.stack = []; hist.push(design);
+  for (const o of B.OPTIONS) $("b-" + o).setAttribute("aria-pressed", String(o === design.active));
+  rebuild(); placeRoom();
+  hud(m ? `Opened: aim at any of tags ${Object.keys(map.tags).join(", ")} to put it back in place` : "Opened (no tag map in the file: lock on tags first)");
+  hudMsg = "";
+  return { objects: B.OPTIONS.map((k) => design.options[k].length), tags: map ? Object.keys(map.tags).length : 0 };
+}
+const readFile = (f) => f.text().then(openDesign).catch((e) => { hud("Could not open: " + e.message); hudMsg = ""; $("status").textContent = "Could not open: " + e.message; });
+$("b-open-btn").onclick = () => $("b-open").click();
+$("b-open").onchange = () => { const f = $("b-open").files[0]; if (f) readFile(f); };
+$("open-start").onchange = () => { const f = $("open-start").files[0]; if (f) { if (!renderer) buildScene(); readFile(f).then(() => { $("status").textContent = `Opened ${f.name}. Press Start AR.`; }); } };
+
+function exportGLB() {
+  return new Promise((done, fail) => {
+    const root = new THREE.Scene();
+    root.name = `site design ${design.active}`;
+    root.add(designGroup(objs(), matPlain));
+    new GLTFExporter().parse(root, (buf) => {
+      const blob = new Blob([buf], { type: "model/gltf-binary" });
+      done({ blob, name: `site-design-${design.active}-${stamp()}.glb` });
+    }, fail, { binary: true });
+  });
+}
+$("b-glb").onclick = () => exportGLB().then(({ blob, name }) => { download(blob, name); hud("GLB saved: open it in viewer.html or any glTF viewer"); hudMsg = ""; });
+
+// ---------- tape check: drawn size against a tape measurement ----------
+const mainLength = (o) => (o.type === "walls" ? B.polyLength(B.scaledPts(o)) : o.w);
+function tapeCheck(tapeM) {
+  const o = objs()[sel];
+  if (!o) { hud("Pick the object you measured first"); hudMsg = ""; return null; }
+  if (!(tapeM > 0)) { hud("Type the tape length in metres"); hudMsg = ""; return null; }
+  const c = { id: o.id, what: B.objectName(o), drawn: Math.round(mainLength(o) * 1000) / 1000, tape: tapeM, errMm: Math.round((mainLength(o) - tapeM) * 1000),
+              tags: lastFix ? lastFix.used : [], at: new Date().toISOString() };
+  checks.push(c);
+  hud(`${c.what}: drawn ${c.drawn.toFixed(3)} m, tape ${tapeM.toFixed(3)} m, ${c.errMm >= 0 ? "+" : ""}${c.errMm} mm (saved with the design)`); hudMsg = "";
+  return c;
+}
+$("b-check").onclick = () => tapeCheck(parseFloat($("b-tape").value));
+
+// ---------- imported model + 2-point alignment ----------
+async function importModel(url, name, side = {}) {
+  const m = await readModel(url, name, side);
+  for (const c of [...modelRoot.children]) modelRoot.remove(c);
+  m.obj.traverse((o) => { if (o.isMesh) for (const x of [o.material].flat()) cameraLook(x); });
+  modelRoot.add(m.obj);
+  imported = { name, units: m.units, size: m.size, align: { yaw: 0, t: [0, 0, 0] } };
+  poseModel();
+  rebuild();
+  hud(`${name}: ${m.size.map((v) => v.toFixed(2)).join(" × ")} m (${m.units}). Align model: tap 2 of its corners and where they are on site`); hudMsg = "";
+  return imported;
+}
+function poseModel() { modelRoot.matrix.fromArray(TM.yawMatrix(imported.align.yaw, imported.align.t)); modelRoot.matrixWorldNeedsUpdate = true; }
+$("b-import").onclick = () => $("b-model").click();
+$("b-model").onchange = () => {
+  const files = [...$("b-model").files];
+  if (!files.length) return;
+  try {
+    const { main } = pickModelFiles(files.map((f) => f.name)), side = {};
+    for (const f of files) side[f.name.toLowerCase()] = URL.createObjectURL(f);
+    importModel(side[files[main].name.toLowerCase()], files[main].name, side).catch((e) => { hud(e.message); hudMsg = ""; });
+  } catch (e) { hud(e.message); hudMsg = ""; }
+};
+// Align: model corner 1, its site corner, model corner 2, its site point (the direction). Model taps snap to
+// the nearest corner of the model's box; site taps are floor points.
+const ALIGN_HINTS = ["Tap a corner of the model", "Tap the real corner it belongs on", "Tap a 2nd model corner (for the direction)", "Tap where that one is on site"];
+function startAlign() {
+  if (!imported) { hud("Import a model first"); hudMsg = ""; return; }
+  alignStep = { i: 0, pts: [], hint: ALIGN_HINTS[0] };
+  hud();
+}
+$("b-align").onclick = startAlign;
+function modelPoint(cx, cy) {
+  const ray = pixelRay(cx, cy, innerWidth, innerHeight, lastProj, lastPose);
+  const rc = new THREE.Raycaster(new THREE.Vector3(...ray.origin), new THREE.Vector3(...ray.dir));
+  const hit = rc.intersectObject(modelRoot, true)[0];
+  if (!hit) return null;
+  modelRoot.updateMatrixWorld(true);
+  const local = modelRoot.worldToLocal(hit.point.clone()).toArray(), box = localBox(modelRoot);
+  const c = B.nearestCorner(box.min, box.max, local);
+  return c.dist < 0.4 ? c.corner : local;
+}
+function alignTap(cx, cy) {
+  const s = alignStep, modelTap = s.i % 2 === 0;
+  let p;
+  if (modelTap) p = modelPoint(cx, cy);
+  else { const f = floorPoint(cx, cy); p = f && [f[0], 0, f[1]]; }
+  if (!p) { hud(modelTap ? "That missed the model: tap on it" : "Aim at the floor"); hudMsg = ""; return; }
+  s.pts.push(p); s.i++;
+  if (s.i < 4) { s.hint = ALIGN_HINTS[s.i]; hud(); return; }
+  try {
+    const a = B.alignTwo(s.pts[0], s.pts[2], s.pts[1], s.pts[3]);
+    imported.align = { yaw: a.yaw, t: a.t };
+    poseModel();
+    alignStep = null;
+    hud(`Aligned. Model ${a.lengthModel.toFixed(2)} m between the corners, site ${a.lengthReal.toFixed(2)} m (${((a.ratio - 1) * 100).toFixed(1)} %)`); hudMsg = "";
+    return a;
+  } catch (e) { alignStep = null; hud(e.message); hudMsg = ""; }
+}
+
+// ---------- tags: detection, the map, and where the room is ----------
+function readTags(frame, view) {
+  const cam = readCamera(frame, view);
+  if (!cam) return "No camera frame from the browser";
+  const img = downsample(pixels, cam.w, cam.h, flipY), found = detector.detect(img);
+  if (!found.length) { if (!flipKnown) flipY = !flipY; return null; }
+  flipKnown = true;
+  const proj = Array.from(view.projectionMatrix), pose = Array.from(view.transform.matrix), out = {};
+  for (const m of mergeNested(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) })))) {
+    const c = m.corners, edge = Math.hypot(c[1][0] - c[0][0], c[1][1] - c[0][1]);
+    if (edge < 18) continue;                                  // too small to give a steady pose
+    try { out[m.id] = tagCorners3D(c, tagSize, cam.w, cam.h, proj, pose); } catch (e) { /* skewed read */ }
+  }
+  return out;
+}
+function lockFirst() {
+  if (!lastSeen || !Object.keys(lastSeen).length) { hud("No tags in view to lock on"); hudMsg = ""; return null; }
+  const r = TM.startMap(lastSeen, tagSize);
+  map = r.map; wfr = r.worldFromRoom; fixTick = tick; lastFix = { used: map.origin, rms: 0 }; pending = {}; anchorFromRoom = null;
+  if (lastHit) setFloorFromHit(lastHit);
+  placeRoom(); hud();
+  return map.origin;
+}
+let lastSeen = {};
+function setFloorFromHit(h) {
+  if (!map || !wfr || !h || h[5] < 0.9) return false;            // only a level surface counts as the floor
+  const q = transform(invert4(wfr), [h[12], h[13], h[14]]);
+  if (q[1] > -0.2) return false;                                  // well below the tags, or it is a table
+  map.floorY = q[1];
+  placeRoom();
+  return true;
+}
+function trackStep(frame, view) {
+  tick++;
+  const seen = readTags(frame, view);
+  if (typeof seen === "string") { hud(seen); hudMsg = ""; return; }
+  lastSeen = seen || {};
+  lastSeenIds = Object.keys(lastSeen).map(Number);
+  if (!map) { hud(); return; }
+  const fix = seen && TM.locate(map, seen);
+  if (fix) { wfr = TM.fusePose(wfr, fix); fixTick = tick; lastFix = fix; anchorFix(frame); }
+  if (mapping && wfr && seen && tick - fixTick <= REG_GRACE_TICKS) {
+    const inv = invert4(wfr);
+    for (const [id, c] of Object.entries(seen)) {
+      if (map.tags[id]) continue;
+      (pending[id] = pending[id] || []).push(c.map((p) => transform(inv, p)));
+      if (pending[id].length >= NEED_SIGHTINGS) {
+        const n = pending[id].length, mean = [0, 1, 2, 3].map((k) => [0, 1, 2].map((j) => pending[id].reduce((s, cs) => s + cs[k][j], 0) / n));
+        map.tags[id] = { surface: TM.tagPose(mean).surface, corners: mean, seen: n };
+        delete pending[id];
+      }
+    }
+  }
+  if (floorY() === null && lastHit) setFloorFromHit(lastHit);
+  placeRoom(); hud();
+}
+// ARCore anchor at the room origin: ARCore moves it when it corrects its own map, and the design moves with it.
+function anchorFix(frame) {
+  if (!frame || !frame.createAnchor || simulated) return;
+  if (anchor) { const ap = frame.getPose(anchor.anchorSpace, refSpace); if (ap) anchorFromRoom = TM.mul4(invert4(Array.from(ap.transform.matrix)), wfr); return; }
+  if (anchorBusy) return;
+  anchorBusy = true;
+  const p = new THREE.Vector3(), q = new THREE.Quaternion();
+  new THREE.Matrix4().fromArray(wfr).decompose(p, q, new THREE.Vector3());
+  frame.createAnchor(new XRRigidTransform({ x: p.x, y: p.y, z: p.z }, { x: q.x, y: q.y, z: q.z, w: q.w }), refSpace)
+    .then((a) => { anchor = a; }).catch(() => {}).finally(() => { anchorBusy = false; });
+}
+$("b-lock").onclick = lockFirst;
+$("b-map").onclick = () => { mapping = !mapping; $("b-map").setAttribute("aria-pressed", String(mapping)); hud(); };
+$("b-floor").onclick = () => { hud(setFloorFromHit(lastHit) ? "Floor set" : "No floor under the reticle: aim at the floor"); hudMsg = ""; };
+$("b-reset").onclick = () => { map = null; wfr = null; pending = {}; anchor = null; anchorFromRoom = null; mapping = true; $("b-map").setAttribute("aria-pressed", "true"); placeRoom(); hud(); };
+
+// One frame, on the phone or in the emulator.
+function frameStep(frame, view, now) {
+  lastProj = Array.from(view.projectionMatrix); lastPose = Array.from(view.transform.matrix);
+  if (now - lastDetect >= TICK_MS) { lastDetect = now; trackStep(frame, view); }
+  if (anchor && anchorFromRoom && frame && frame.trackedAnchors && frame.trackedAnchors.has(anchor)) {
+    const ap = frame.getPose(anchor.anchorSpace, refSpace);
+    if (ap) { wfr = TM.mul4(Array.from(ap.transform.matrix), anchorFromRoom); placeRoom(); }
+  }
+  if (wantShot) takeShot(frame, view);
+  if (rec) videoFrame(frame, view, now);
+}
+
+// ---------- session ----------
+(async () => {
+  const ok = navigator.xr && await navigator.xr.isSessionSupported("immersive-ar").catch(() => false);
+  $("start").disabled = !ok;
+  $("status").textContent = ok ? "Ready. Tape the tags up, then press Start AR."
+    : "This needs Chrome on an Android phone with Google Play Services for AR (iPhone Safari has no WebXR).";
+})();
+$("start").onclick = async () => {
+  tagSize = (parseFloat($("size").value) || 160) / 1000;
+  if (map) tagSize = map.size;
+  if (!renderer) buildScene();
+  try {
+    session = await navigator.xr.requestSession("immersive-ar", {
+      requiredFeatures: ["hit-test"], optionalFeatures: ["camera-access", "anchors", "dom-overlay", "light-estimation"], domOverlay: { root: $("overlay") } });
+  } catch (e) { $("status").textContent = "AR could not start: " + e.message; return; }
+  detector = new AR.Detector({ dictionaryName: "APRILTAG_36h11" });
+  $("overlay").classList.add("on");
+  renderer.xr.setReferenceSpaceType("local");
+  await renderer.xr.setSession(session);
+  refSpace = renderer.xr.getReferenceSpace();
+  binding = renderer.xr.getBinding ? renderer.xr.getBinding() : new XRWebGLBinding(session, renderer.getContext());
+  const viewer = await session.requestReferenceSpace("viewer");
+  try { hitSource = await session.requestHitTestSource({ space: viewer, entityTypes: ["plane", "point"] }); }
+  catch (e) { hitSource = await session.requestHitTestSource({ space: viewer }); }
+  if (session.requestLightProbe) session.requestLightProbe(lightProbeOptions(session)).then((p) => { lightProbe = p; }).catch(() => {});
+  anchor = null; anchorFromRoom = null; wfr = null;
+  session.addEventListener("end", () => { $("overlay").classList.remove("on"); hitSource = null; session = null; if (rec) stopVideo(); renderer.setAnimationLoop(null); });
+  hud();
+  renderer.setAnimationLoop((t, frame) => {
+    if (frame && hitSource) {
+      const hits = frame.getHitTestResults(hitSource), hp = hits.length && hits[0].getPose(refSpace);
+      if (hp) lastHit = Array.from(hp.transform.matrix);
+      const pose = frame.getViewerPose(refSpace), view = pose && pose.views[0];
+      if (lightProbe) {
+        const est = frame.getLightEstimate(lightProbe);
+        if (est) { const i = est.primaryLightIntensity; light = smoothLight(light, [i.x, i.y, i.z]); sun.color.setRGB(...light.color); sun.intensity = light.intensity; hemi.intensity = light.intensity * 0.83; }
+      }
+      const layer = session.renderState.baseLayer;
+      camLook.grainAmt.value = grainFor(light.intensity); camLook.grainSeed.value = (t * 0.37) % 997;
+      camLook.grainRes.value.set(layer ? layer.framebufferWidth : innerWidth, layer ? layer.framebufferHeight : innerHeight);
+      if (view) frameStep(frame, view, performance.now());
+    }
+    renderer.render(scene, camera);
+  });
+};
+$("b-exit").onclick = () => { if (session) session.end(); else { $("overlay").classList.remove("on"); simulated = false; } };
+$("overlay").addEventListener("beforexrselect", (e) => { if (e.target.closest("button, input, select, label, a, #shot")) e.preventDefault(); });
+
+// ---------- desktop: the phone emulator ----------
+let emuView = null;
+function redraw() {
+  if (!simulated || !emu || !renderer) return;
+  camera.projectionMatrix.fromArray(emuView.projectionMatrix);
+  camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+  camera.matrixAutoUpdate = false;
+  camera.matrixWorld.fromArray(emuView.transform.matrix);
+  camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+  scene.background = emu.target.texture;
+  renderer.setRenderTarget(null);
+  camLook.grainRes.value.set(...renderer.getDrawingBufferSize(new THREE.Vector2()).toArray());
+  renderer.render(scene, camera);
+}
+function emuFrameNow() { if (emuView) { frameStep({}, emuView, performance.now() + 1e6); redraw(); } }
+const vec = (a, b, k = 1) => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k];
+const crossV = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+// a posed tag's true corners (TL, TR, BR, BL) as phoneemu.js setPosedTags lays it out (spin 0)
+function trueCorners(t, size) {
+  const n = t.face, up = Math.abs(n[1]) < 0.9 ? [0, 1, 0] : [0, 0, -Math.sign(n[1])];
+  let x = crossV(up, n); const lx = Math.hypot(...x); x = x.map((v) => v / lx);
+  const y = crossV(n, x), h = size / 2;
+  return [[-h, h], [h, h], [h, -h], [-h, -h]].map(([a, b]) => vec(vec(t.at, x, a), y, b));
+}
+// tags on the 4 walls of a w x d room, 2 per wall `spread` metres either side of the wall's middle
+function wallTags(w, d, y = 1.3, spread = 0.18) {
+  const walls = [[[0, y, -d / 2], [0, 0, 1], [1, 0, 0]], [[w / 2, y, 0], [-1, 0, 0], [0, 0, 1]],
+                 [[0, y, d / 2], [0, 0, -1], [-1, 0, 0]], [[-w / 2, y, 0], [1, 0, 0], [0, 0, -1]]];
+  return walls.flatMap(([c, face, along], i) => [-1, 1].map((s, k) => ({ id: 2 * i + k, at: vec(c, along, s * spread), face })));
+}
+let emuTags = [], emuRoomSize = null;
+
+window.__site = {
+  // Desktop start: the emulator stands in for the phone (the same detection, map and drawing code runs).
+  emuStart({ size = 0.16, seed = 1, w = 5, d = 5, h = 2.6, tagY = 1.3, spread = 0.18, tags = null } = {}) {
+    if (!renderer) buildScene();
+    tagSize = size;
+    detector = detector || new AR.Detector({ dictionaryName: "APRILTAG_36h11" });
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    emu = emu || new PhoneEmulator(THREE, renderer, AR.DICTIONARIES.APRILTAG_36h11.codeList, { w: Math.round(innerWidth * dpr), h: Math.round(innerHeight * dpr) });
+    emuR = rng(seed);
+    emuCamera = () => { pixels = emu.capture(); return { w: emu.w, h: emu.h }; };
+    emu.setRoom(w, d, h);
+    emuTags = tags || wallTags(w, d, tagY, spread);
+    emu.setPosedTags(emuTags, size);
+    emu.resetDrift();
+    emuRoomSize = { w, d, h };
+    map = null; wfr = null; pending = {}; mapping = true; lastFix = null; flipKnown = false; flipY = true;
+    $("b-map").setAttribute("aria-pressed", "true");
+    $("overlay").classList.add("on");
+    fillScreen();
+    simulated = true;
+    placeRoom();
+    return this.state();
+  },
+  // Stand at eye looking at look for `steps` detection ticks (tracking error trackMm, hit test on the floor below look).
+  emuLook({ eye, look, steps = 3, shake = { mm: 3, deg: 0.3 }, trackMm = 1 }) {
+    for (let i = 0; i < steps; i++) {
+      emu.aim(eye, look, emuR, shake);
+      emuView = emu.view(emuR, trackMm);
+      lastHit = emu.hit([look[0], look[2]], emuR, 1);
+      lastDetect = -1e9;
+      frameStep({}, emuView, performance.now());
+    }
+    redraw();
+    return this.state();
+  },
+  lock() { return lockFirst(); },
+  // Drift check: lock on the back wall, walk `laps` times round the room (wallWalk), the emulated tracking
+  // drifting mmPerM and degPerM per metre walked (random directions). Mapping is on for the first lap only.
+  // At every stop: how far the design is from where it belongs (tagmap.js poseDelta over the room's corners),
+  // with the tag map correcting it, and without (the pose from the lock, ARCore tracking only).
+  emuWalk({ laps = 2, n = 48, inset = 1.0, mmPerM = 10, degPerM = 0.2, steps = 3, mapLaps = 1 } = {}) {
+    const { w, d } = emuRoomSize, stops = TM.wallWalk(w, d, inset, n);
+    const start = { eye: [0, 1.4, -d / 2 + inset], look: [0, 1.3, -d / 2] };          // facing the back wall's tags
+    this.emuLook({ ...start, steps: 6 });
+    if (!this.lock()) return { error: "could not lock on the back wall" };
+    this.emuLook({ ...start, steps: 2 });
+    const truth0 = TM.roomFrame(map.origin.map((id) => trueCorners(emuTags.find((t) => t.id === id), tagSize)));
+    const inv0 = invert4(truth0), pts = [-1, 1].flatMap((sx) => [0, 2.5].flatMap((y) => [-1, 1].map((sz) => transform(inv0, [(sx * w) / 2, y, (sz * d) / 2]))));
+    const held = wfr.slice(), rows = [];
+    for (let lap = 0; lap < laps; lap++) {
+      mapping = lap < mapLaps;
+      for (let i = 0; i < stops.length; i++) {
+        const prev = i ? stops[i - 1].eye : lap ? stops[stops.length - 1].eye : start.eye;
+        const dist = Math.hypot(stops[i].eye[0] - prev[0], stops[i].eye[2] - prev[2]);
+        if (dist > 0) emu.driftStep(emuR, mmPerM * dist, degPerM * dist);
+        this.emuLook({ ...stops[i], steps });
+        const truth = TM.mul4(Array.from(emu.drift.elements), truth0);
+        const c = TM.poseDelta(wfr, truth, pts), u = TM.poseDelta(held, truth, pts);
+        rows.push({ lap, i, used: lastFix && tick - fixTick === 0 ? lastFix.used : [], mm: Math.round(c.mm), deg: +c.deg.toFixed(2), rawMm: Math.round(u.mm), rawDeg: +u.deg.toFixed(2) });
+      }
+    }
+    mapping = false;
+    const sum = (lap) => {
+      const r = rows.filter((x) => x.lap === lap), mx = (k) => Math.max(...r.map((x) => x[k])), av = (k) => Math.round(r.reduce((s, x) => s + x[k], 0) / r.length);
+      return { lap, maxMm: mx("mm"), meanMm: av("mm"), maxDeg: mx("deg"), rawMaxMm: mx("rawMm"), rawMeanMm: av("rawMm"), rawMaxDeg: mx("rawDeg"),
+               stopsWithTag: r.filter((x) => x.used.length).length, stops: r.length };
+    };
+    return { walkM: +(TM.walkLength(stops) * laps).toFixed(1), mapped: Object.keys(map.tags).map(Number), laps: [...Array(laps).keys()].map(sum), rows };
+  },
+  // Draw a straight wall line of len metres through the real tap path, from a view of the floor in front of
+  // the first wall; returns its drawn length and where its ends really are in the emulated room.
+  sizeCheck({ len = 3, z = 1.2, eye = [0, 1.55, 0.9], look = [0, 0, -0.9] } = {}) {
+    this.emuLook({ eye, look, steps: 2 });
+    setMode("draw");
+    startDraw("walls");
+    const a = [-len / 2, 0, z], b = [len / 2, 0, z];
+    tap(...screenOf(a)); tap(...screenOf(b));
+    finishDrawn();
+    tap(...screenOf([0, 0, z + 3]));                          // a tap away ends the height drag
+    const o = objs()[objs().length - 1];
+    return { drawn: B.polyLength(B.scaledPts(o)), ...this.trueEnds(o) };
+  },
+  // Where object o's line ends are in the emulated (true) room, through the page's current pose: true length
+  // and how far each end is from where the design's room frame puts it on the true map frame.
+  trueEnds(o) {
+    const pts = B.scaledPts(o), ends = [pts[0], pts[pts.length - 1]].map((p) => B.toRoom(o, p));
+    const truth = TM.roomFrame(map.origin.map((id) => trueCorners(emuTags.find((t) => t.id === id), tagSize)));
+    const D = invert4(Array.from(emu.drift.elements)), fy = floorY();
+    const shown = ends.map(([x, z]) => transform(D, transform(wfr, [x, fy, z])));        // where the phone draws it, in the real room
+    const meant = ends.map(([x, z]) => transform(truth, [x, fy, z]));                    // where the map frame says it belongs
+    return { trueLength: +Math.hypot(shown[1][0] - shown[0][0], shown[1][2] - shown[0][2]).toFixed(4),
+             endErrMm: shown.map((p, i) => Math.round(Math.hypot(p[0] - meant[i][0], p[1] - meant[i][1], p[2] - meant[i][2]) * 1000)) };
+  },
+  endsOf(i) { return this.trueEnds(objs()[i]); },
+  tapRoom(p) { tap(...screenOf([p[0], 0, p[1]])); return this.state(); },
+  tap(x, y) { tap(x, y); return this.state(); },
+  screenOf,
+  setMode(m) { setMode(m); return this.state(); },
+  startDraw(k) { startDraw(k); return this.state(); },
+  finish() { finishDrawn(); return this.state(); },
+  addBlock(type, x, z, yaw = 0) { addObj(B.newBlock(type, x, z, yaw)); commit(); return this.state(); },
+  select(i) { sel = i; showSel(); redraw(); return this.state(); },
+  click(id) { $(id).click(); redraw(); return this.state(); },
+  dragHeight(dyPx) { const o = objs()[sel]; setObj(sel, B.resized(o, { h: B.dragHeight(o.h, dyPx) })); commit(); return this.state(); },
+  option(k) { chooseOption(k); return this.state(); },
+  photo() { wantShot = true; emuFrameNow(); return this.state(); },
+  async video(frames = 15) {
+    if (!startVideo()) return null;
+    for (let i = 0; i < frames; i++) { await new Promise((r) => setTimeout(r, 1000 / VIDEO_FPS + 5)); rec.last = 0; videoFrame({}, emuView, performance.now()); }
+    return stopVideo();
+  },
+  record: () => designFile(),
+  open: (r) => openDesign(r),
+  glb: () => exportGLB().then(({ blob, name }) => ({ bytes: blob.size, name })),
+  importModel: (url, name) => importModel(url, name).then((m) => ({ ...m })),
+  align(m1, r1, m2, r2) { const a = B.alignTwo(m1, m2, r1, r2); imported.align = { yaw: a.yaw, t: a.t }; poseModel(); redraw(); return a; },
+  alignByTaps(taps) { startAlign(); let a; for (const s of taps) a = alignTap(...s); redraw(); return a || alignStep; },
+  modelBox: () => localBox(modelRoot),
+  tapeCheck: (m) => tapeCheck(m),
+  undo() { $("b-undo").click(); return this.state(); },
+  map: () => map && TM.mapRecord(map),
+  state() {
+    return { mode, locked: !!wfr, floorY: floorY(), tags: map ? Object.keys(map.tags).map(Number) : [], pending: Object.keys(pending).map(Number),
+             fix: lastFix && { used: lastFix.used, rms: +(lastFix.rms * 1000).toFixed(1) }, active: design.active,
+             objects: objs().map((o) => ({ type: o.type, x: +o.x.toFixed(3), z: +o.z.toFixed(3), w: +o.w.toFixed(3), h: +o.h.toFixed(3), d: +o.d.toFixed(3), yaw: +o.yaw.toFixed(3), mat: o.mat, label: B.sizeLabel(o) })),
+             counts: B.OPTIONS.map((k) => design.options[k].length), sel, tool: tool && { kind: tool.kind, n: tool.pts ? tool.pts.length : 0 }, dragMode, labels, before,
+             undo: hist.stack.length, hud: $("hud").textContent };
+  },
+};
+</script>
+</body>
+</html>

@@ -66,6 +66,55 @@ export class PhoneEmulator {
     }
   }
 
+  // Tags anywhere (several walls, floor): tags = [{id, at: [x, y, z], face: [nx, ny, nz], spinDeg = 0}];
+  // face = the way the printed side looks (out of its wall), spin = turned in its own plane from upright
+  // (on a wall: top edge level; on the floor: top towards -z). size as in setTags.
+  setPosedTags(tags, size = 0.16) {
+    const T = this.THREE;
+    this.tags.clear();
+    for (const t of tags) {
+      const m = new T.Mesh(new T.PlaneGeometry(size * 1.25, size * 1.25), new T.MeshBasicMaterial({ map: this.texture(t.id) }));
+      const n = new T.Vector3(...t.face).normalize(), level = Math.abs(n.y) < 0.9;
+      const up = level ? new T.Vector3(0, 1, 0) : new T.Vector3(0, 0, -Math.sign(n.y));
+      const x = new T.Vector3().crossVectors(up, n).normalize(), y = new T.Vector3().crossVectors(n, x);
+      m.matrixAutoUpdate = false;
+      m.matrix.makeBasis(x, y, n).multiply(new T.Matrix4().makeRotationZ(((t.spinDeg || 0) * Math.PI) / 180))
+        .setPosition(t.at[0] + n.x * 0.0005, t.at[1] + n.y * 0.0005, t.at[2] + n.z * 0.0005);
+      this.tags.add(m);
+    }
+  }
+
+  // Grey walls (and a ceiling) round a w x d x h room centred on the origin, so the camera image is a room.
+  setRoom(w = 4, d = 4, h = 2.6) {
+    const T = this.THREE;
+    if (this.room) this.scene.remove(this.room);
+    this.room = new T.Group();
+    const mat = (c) => new T.MeshBasicMaterial({ color: c, side: T.DoubleSide });
+    const walls = [[[0, h / 2, -d / 2], 0, w, 0xc9c4ba], [[0, h / 2, d / 2], Math.PI, w, 0xc4bfb5],
+                   [[-w / 2, h / 2, 0], Math.PI / 2, d, 0xbfbab0], [[w / 2, h / 2, 0], -Math.PI / 2, d, 0xcdc8be]];
+    for (const [p, ry, len, c] of walls) {
+      const m = new T.Mesh(new T.PlaneGeometry(len, h), mat(c));
+      m.position.set(...p); m.rotation.y = ry;
+      this.room.add(m);
+    }
+    const ceil = new T.Mesh(new T.PlaneGeometry(w, d).rotateX(Math.PI / 2), mat(0xe2e0db));
+    ceil.position.y = h;
+    const floor = new T.Mesh(new T.PlaneGeometry(w, d).rotateX(-Math.PI / 2), mat(0x8d8478));
+    floor.position.y = -0.001;                                   // under the table, so tags on it still show
+    this.room.add(ceil, floor);
+    this.scene.add(this.room);
+  }
+
+  // Tracking drift: the page sees every pose (camera, hit tests) through this matrix (a three.js Matrix4,
+  // identity = none). driftStep turns it by deg about y and shifts it by mm in a random level direction.
+  resetDrift() { this.drift = new this.THREE.Matrix4(); }
+  driftStep(r, mm, deg) {
+    const T = this.THREE, a = r.uni() * 2 * Math.PI;
+    const step = new T.Matrix4().makeRotationY((r.gauss() * deg * Math.PI) / 180)
+      .setPosition((Math.cos(a) * mm) / 1000, (r.gauss() * mm * 0.2) / 1000, (Math.sin(a) * mm) / 1000);
+    this.drift = step.multiply(this.drift || new T.Matrix4());
+  }
+
   // Point the phone from eye at look (world metres), shaken by shake = {mm, deg} with random r.
   aim(eye, look, r, shake = { mm: 4, deg: 0.4 }) {
     const T = this.THREE, j = (k) => r.gauss() * k;
@@ -93,6 +142,7 @@ export class PhoneEmulator {
   view(r, trackMm = 1) {
     const m = this.camera.matrixWorld.clone(), e = m.elements;
     for (const i of [12, 13, 14]) e[i] += (r.gauss() * trackMm) / 1000;
+    if (this.drift) m.premultiply(this.drift);
     return { projectionMatrix: Float32Array.from(this.camera.projectionMatrix.elements),
              transform: { matrix: Float32Array.from(e) }, camera: { width: this.w, height: this.h } };
   }
@@ -101,6 +151,8 @@ export class PhoneEmulator {
   hit(p, r, normalDeg = 1) {
     const T = this.THREE, a = (normalDeg * Math.PI) / 180;
     const q = new T.Quaternion().setFromEuler(new T.Euler(r.gauss() * a, 0, r.gauss() * a));
-    return Array.from(new T.Matrix4().makeRotationFromQuaternion(q).setPosition(p[0], 0, p[1]).elements);
+    const m = new T.Matrix4().makeRotationFromQuaternion(q).setPosition(p[0], 0, p[1]);
+    if (this.drift) m.premultiply(this.drift);
+    return Array.from(m.elements);
   }
 }

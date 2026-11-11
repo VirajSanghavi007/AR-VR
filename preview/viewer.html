@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Site Design Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<style>
+:root { --bg: #eef1f4; --panel: rgba(255,255,255,.92); --fg: #16202b; --muted: #5b6876; --line: #d5dce3; --accent: #1d3f8f; --accent-fg: #fff;
+        --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f151c; --panel: rgba(23,32,42,.92); --fg: #e6ecf2; --muted: #93a1b0; --line: #2a3644; --accent: #7ea2ff; --accent-fg: #0b1220; color-scheme: dark } }
+:root[data-theme="dark"] { --bg: #0f151c; --panel: rgba(23,32,42,.92); --fg: #e6ecf2; --muted: #93a1b0; --line: #2a3644; --accent: #7ea2ff; --accent-fg: #0b1220; color-scheme: dark }
+html, body { margin: 0; height: 100%; overflow: hidden; }
+body { background: var(--bg); color: var(--fg); font: 15px/1.45 var(--sans); }
+canvas { display: block; }
+.bar { position: fixed; left: 12px; right: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+       background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+#top { top: max(12px, env(safe-area-inset-top)); }
+#bottom { bottom: max(12px, env(safe-area-inset-bottom)); }
+h1 { font-size: 1rem; font-weight: 600; margin: 0; flex: 1 1 160px; }
+#info { color: var(--muted); font-size: .85rem; flex: 1 1 100%; margin: 0; }
+button, label.btn { border: 1px solid var(--line); background: transparent; color: var(--fg); border-radius: 8px; padding: 8px 12px; font: 600 .85rem var(--sans); cursor: pointer; }
+button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button:focus-visible, label.btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+label.btn input { display: none; }
+</style>
+</head>
+<body>
+<div class="bar" id="top">
+  <h1 id="title">Site design</h1>
+  <label class="btn">Open .json or .glb<input id="file" type="file" accept=".json,.glb,application/json,model/gltf-binary"></label>
+  <a href="site.html" style="font-size:.85rem">Designer (AR)</a>
+  <p id="info">Loading the sample design...</p>
+</div>
+<div class="bar" id="bottom">
+  <button id="o-A" aria-pressed="true">A</button><button id="o-B">B</button><button id="o-C">C</button>
+  <button id="before" aria-pressed="false">Before</button>
+  <button id="labels" aria-pressed="true">Sizes</button>
+  <button id="tags" aria-pressed="true">Tags</button>
+</div>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import * as B from "./blocks.js?v=2";
+import { materialSet, designGroup, sunAndSky } from "./build3d.js?v=2";
+
+const $ = (id) => document.getElementById(id);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+scene.background = new THREE.Color(dark ? 0x1a232d : 0xdfe6ec);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.05, 200);
+camera.position.set(6, 5, 8);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI * 0.49;
+const { hemi, sun } = sunAndSky(12, 2);
+scene.add(hemi, sun, sun.target);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(60, 60).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: dark ? 0x3a414a : 0xc9cdd1, roughness: 1 }));
+ground.receiveShadow = true;
+scene.add(ground, new THREE.GridHelper(20, 20, 0x8894a0, 0x8894a0).translateY(0.002));
+const content = new THREE.Group(), tagsRoot = new THREE.Group();
+scene.add(content, tagsRoot);
+const mat = materialSet();
+
+let design = null, map = null, glb = null, opt = "A", before = false, labels = true, showTags = true, name = "";
+
+function clear(g) { for (const c of [...g.children]) g.remove(c); }
+// the tag map's tags as small squares on their walls (room frame, floor moved to y = 0)
+function drawTags() {
+  clear(tagsRoot);
+  if (!map) return;
+  const fy = Number.isFinite(map.floorY) ? map.floorY : 0, m = new THREE.MeshBasicMaterial({ color: 0x111111, side: THREE.DoubleSide });
+  for (const t of Object.values(map.tags)) {
+    const pts = t.corners.map(([x, y, z]) => new THREE.Vector3(x, y - fy, z));
+    const g = new THREE.BufferGeometry().setFromPoints([pts[0], pts[1], pts[2], pts[0], pts[2], pts[3]]);
+    g.computeVertexNormals();
+    tagsRoot.add(new THREE.Mesh(g, m));
+  }
+}
+function frame(obj) {
+  const box = new THREE.Box3().setFromObject(obj);
+  if (box.isEmpty()) return;
+  const c = box.getCenter(new THREE.Vector3()), r = Math.max(2, box.getSize(new THREE.Vector3()).length() / 2);
+  controls.target.copy(c);
+  camera.position.copy(c).add(new THREE.Vector3(1, 0.8, 1.3).normalize().multiplyScalar(r * 2.4 * Math.max(1, 1 / camera.aspect)));   // a tall phone screen needs more room
+  controls.update();
+}
+function show(refit = false) {
+  clear(content);
+  for (const k of B.OPTIONS) {
+    const b = $("o-" + k), n = design ? design.options[k].length : 0;
+    b.setAttribute("aria-pressed", String(k === opt));
+    b.disabled = !design || (!n && k !== opt);
+    b.textContent = design ? `${k} (${n})` : k;
+  }
+  tagsRoot.visible = showTags;
+  if (glb) { if (!before) content.add(glb); }
+  else if (design && !before) content.add(designGroup(design.options[opt], mat, { labels, labelM: 0.14 }));
+  if (refit) frame(content.children.length ? content : tagsRoot);
+  const objs = design ? design.options[opt] : [];
+  $("info").textContent = glb ? `${name}: a GLB model` :
+    design ? `${design.names[opt]}: ${objs.length} object${objs.length === 1 ? "" : "s"}${before ? " (hidden: the site as it is)" : ""}${map ? ` · ${Object.keys(map.tags).length} tags mapped` : ""} · drag to turn, pinch to zoom` : "";
+}
+function openDesign(text, fileName) {
+  const r = B.parseDesign(text);
+  design = r.design; map = r.map; glb = null; opt = design.active; name = fileName;
+  $("title").textContent = fileName.replace(/\.json$/i, "");
+  drawTags(); show(true);
+}
+async function openGLB(url, fileName) {
+  glb = (await new GLTFLoader().loadAsync(url)).scene;
+  glb.traverse((o) => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
+  design = null; map = null; name = fileName;
+  $("title").textContent = fileName;
+  drawTags(); show(true);
+}
+for (const k of B.OPTIONS) $("o-" + k).onclick = () => { opt = k; show(true); };
+const toggle = (id, get, set) => { $(id).onclick = () => { set(!get()); $(id).setAttribute("aria-pressed", String(get())); show(); }; };
+toggle("before", () => before, (v) => { before = v; $("before").textContent = v ? "After" : "Before"; });
+toggle("labels", () => labels, (v) => { labels = v; });
+toggle("tags", () => showTags, (v) => { showTags = v; });
+$("file").onchange = async () => {
+  const f = $("file").files[0];
+  if (!f) return;
+  try { if (/\.glb$/i.test(f.name)) await openGLB(URL.createObjectURL(f), f.name); else openDesign(await f.text(), f.name); }
+  catch (e) { $("info").textContent = `Could not open ${f.name}: ${e.message}`; }
+};
+// ?design=<url of a .json or .glb>; with none, the sample design
+const src = new URLSearchParams(location.search).get("design") || "samples/site_design_sample.json";
+(async () => {
+  try {
+    const fileName = src.split("/").pop();
+    if (/\.glb$/i.test(src)) await openGLB(src, fileName);
+    else openDesign(await (await fetch(src)).text(), fileName);
+  } catch (e) { $("info").textContent = `Could not load ${src}: ${e.message}. Open a file instead.`; }
+})();
+addEventListener("resize", () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+window.__viewer = { state: () => ({ name, opt, before, labels, objects: content.children.length ? design?.options[opt].length ?? 1 : 0, tags: map ? Object.keys(map.tags).length : 0, info: $("info").textContent }),
+                    option: (k) => { opt = k; show(true); return window.__viewer.state(); } };
+</script>
+</body>
+</html>
