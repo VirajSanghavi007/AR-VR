@@ -1,0 +1,64 @@
+{
+ "tag_mm": 160,
+ "ids": [
+  0,
+  1,
+  2,
+  3
+ ],
+ "photos": [
+  {
+   "name": "tag_photo_01_overhead.jpg",
+   "ids": [
+    0,
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "name": "tag_photo_02_from_front.jpg",
+   "ids": [
+    0,
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "name": "tag_photo_03_from_left.jpg",
+   "ids": [
+    0,
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "name": "tag_photo_04_from_right.jpg",
+   "ids": [
+    0,
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "name": "tag_photo_05_turned.jpg",
+   "ids": [
+    0,
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "name": "tag_photo_06_id3_cut_off.jpg",
+   "ids": [
+    0,
+    1,
+    2
+   ]
+  }
+ ]
+}

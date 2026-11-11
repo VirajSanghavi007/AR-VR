@@ -69,6 +69,39 @@ def test_assess_frame_flags(node_available):
     assert run(f"C.assessFrame([{{id:0,corners:{SQ}}}], [0], 101)")[0]["problems"][0].startswith("small")
 
 
+def sq(x, y, e):
+    return [[x, y], [x + e, y], [x + e, y + e], [x, y + e]]
+
+
+def test_merge_nested_keeps_the_outer_outline(node_available):
+    # one tag found twice (outline + a contour 3 px inside), next to a different tag: the bigger copy stays, order kept
+    ms = [{"id": 2, "corners": sq(3, 3, 94)}, {"id": 1, "corners": sq(300, 0, 50)}, {"id": 2, "corners": sq(0, 0, 100)}]
+    r = run(f"C.mergeNested({json.dumps(ms)})")
+    assert r == [ms[1], ms[2]]
+    assert run(f"C.mergeNested({json.dumps(ms[::-1])})") == [ms[2], ms[1]]
+
+
+def test_merge_nested_leaves_real_duplicates_and_other_ids(node_available):
+    far = [{"id": 2, "corners": sq(0, 0, 100)}, {"id": 2, "corners": sq(400, 0, 100)}]
+    assert run(f"C.mergeNested({json.dumps(far)})") == far                  # same id at two places: a real duplicate
+    edge = [{"id": 2, "corners": sq(0, 0, 100)}, {"id": 2, "corners": sq(49, 0, 100)}, {"id": 2, "corners": sq(0, 51, 100)}]
+    assert run(f"C.mergeNested({json.dumps(edge)})") == [edge[0], edge[2]]  # under half an edge apart: same tag
+    other = [{"id": 2, "corners": sq(0, 0, 100)}, {"id": 3, "corners": sq(3, 3, 94)}]
+    assert run(f"C.mergeNested({json.dumps(other)})") == other              # a different id is never merged
+    assert run("C.mergeNested([])") == []
+    small_first = [{"id": 4, "corners": sq(10, 10, 80)}, {"id": 4, "corners": sq(0, 0, 100)}]
+    assert run(f"C.mergeNested({json.dumps(small_first)})") == [small_first[1]]
+
+
+def test_pages_merge_nested_detections():
+    tags = (PREVIEW / "tags.html").read_text(encoding="utf-8")
+    assert 'mergeNested, assessFrame, summarize, MIN_VIEWS, GOOD_VIEWS } from "./tagcheck.js?v=2";' in tags
+    assert "return mergeNested(toMarkers(detector.detect(img), 1 / k));" in tags
+    tagar = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
+    assert 'import { mergeNested } from "./tagcheck.js?v=2";' in tagar
+    assert "chooseTags(mergeNested(found.map(" in tagar
+
+
 def photo(name, *ids, edge=100):
     tags = ",".join(f"{{id:{i},minEdge:{edge},problems:[]}}" for i in ids)
     return f'{{name:"{name}",tags:[{tags}]}}'

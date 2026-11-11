@@ -31,6 +31,23 @@ export function edgeLengths(corners) {
   });
 }
 
+// js-aruco2 can find one sharp tag twice: the outline of its black square and a contour just inside
+// it, same id, same centre. Keep the bigger of such a pair; the same id somewhere else stays (a real
+// duplicate). Order of the rest is kept.
+const centre = (c) => [c.reduce((s, p) => s + p[0], 0) / c.length, c.reduce((s, p) => s + p[1], 0) / c.length];
+export function mergeNested(markers) {
+  const keep = [];
+  for (const m of [...markers].sort((a, b) => Math.min(...edgeLengths(b.corners)) - Math.min(...edgeLengths(a.corners)))) {
+    const [x, y] = centre(m.corners);
+    const inside = keep.some((k) => {
+      const [kx, ky] = centre(k.corners);
+      return k.id === m.id && Math.hypot(kx - x, ky - y) < 0.5 * Math.min(...edgeLengths(k.corners));
+    });
+    if (!inside) keep.push(m);
+  }
+  return markers.filter((m) => keep.includes(m));
+}
+
 // One frame or photo: per-tag size and problems
 export function assessFrame(markers, expected, minEdgePx = MIN_EDGE_PX) {
   const want = new Set(expected);

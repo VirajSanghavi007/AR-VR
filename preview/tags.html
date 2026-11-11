@@ -107,6 +107,7 @@ td.name { word-break: break-all; }
     <p class="label">Check the photo set (what tag_scale.py will see)</p>
     <div class="row" style="margin-bottom:10px">
       <label class="filebtn">Choose photos<input id="files" type="file" accept="image/*" multiple></label>
+      <button id="sampleBtn" type="button">Use sample photos</button>
       <label for="res" class="muted">Detect at</label>
       <select id="res">
         <option value="1600">1600 px (fast)</option>
@@ -134,7 +135,8 @@ td.name { word-break: break-all; }
 <script src="vendor/js-aruco2/aruco.js"></script>
 <script src="tag36h11.js?v=1"></script>
 <script type="module">
-import { parseIds, toMarkers, assessFrame, summarize, MIN_VIEWS, GOOD_VIEWS } from "./tagcheck.js?v=1";
+import { parseIds, toMarkers, mergeNested, assessFrame, summarize, MIN_VIEWS, GOOD_VIEWS } from "./tagcheck.js?v=2";
+import { samplesOn } from "./model.js?v=4";
 
 const $ = (id) => document.getElementById(id);
 const detector = new AR.Detector({ dictionaryName: "APRILTAG_36h11" });
@@ -158,7 +160,7 @@ function detect(source, w, h, maxSide) {
   work.width = Math.round(w * k); work.height = Math.round(h * k);
   wctx.drawImage(source, 0, 0, work.width, work.height);
   const img = wctx.getImageData(0, 0, work.width, work.height);
-  return toMarkers(detector.detect(img), 1 / k);
+  return mergeNested(toMarkers(detector.detect(img), 1 / k));
 }
 
 function draw(canvas, source, w, h, tags) {
@@ -190,7 +192,11 @@ function setMode(live) {
   if (!live) stopCamera();
 }
 $("modeLive").onclick = () => setMode(true);
-$("modePhotos").onclick = () => setMode(false);
+$("modePhotos").onclick = () => {
+  setMode(false);
+  // while testing, the first visit checks the sample set so the page shows a result with nothing picked (?samples=0: off)
+  if (!photoResults.length && !photoRun && samplesOn(location.search)) checkSamples();
+};
 
 // ---------- live camera ----------
 const video = document.createElement("video");
@@ -244,28 +250,55 @@ function loop(ts) {
 // ---------- photo set ----------
 let photoResults = [];
 
-$("files").addEventListener("change", async (e) => {
-  const files = [...e.target.files];
-  if (!files.length) return;
+// items: [{ name, blob }] (picked files or fetched samples). A newer run stops an older one.
+let photoRun = 0;
+async function checkPhotos(items) {
+  const run = ++photoRun;
   photoResults = []; $("rows").replaceChildren(); $("summary").hidden = false;
   const maxSide = Number($("res").value), t0 = performance.now();
-  for (let i = 0; i < files.length; i++) {
+  for (let i = 0; i < items.length; i++) {
     let tags = [], error = null;
     try {
-      const bmp = await createImageBitmap(files[i]);
+      const bmp = await createImageBitmap(items[i].blob);
       tags = assessFrame(detect(bmp, bmp.width, bmp.height, maxSide), expected);
       draw($("photoCanvas"), bmp, bmp.width, bmp.height, tags);
       bmp.close();
     } catch (err) { error = `could not read: ${err.message || err}`; }
-    photoResults.push({ name: files[i].name, tags, error });
+    if (run !== photoRun) return false;
+    photoResults.push({ name: items[i].name, tags, error });
     addRow(photoResults.at(-1));
     const done = i + 1, el = (performance.now() - t0) / 1000;
-    $("progress").textContent = `${done}/${files.length} (${Math.round(100 * done / files.length)}%) - ${el.toFixed(0)}s elapsed, eta ${(el / done * (files.length - done)).toFixed(0)}s`;
+    $("progress").textContent = `${done}/${items.length} (${Math.round(100 * done / items.length)}%) - ${el.toFixed(0)}s elapsed, eta ${(el / done * (items.length - done)).toFixed(0)}s`;
     renderSummary();
     await new Promise((r) => setTimeout(r));                // let the page repaint between photos
   }
+  return run === photoRun;
+}
+
+$("files").addEventListener("change", async (e) => {
+  const files = [...e.target.files];
+  if (!files.length) return;
+  await checkPhotos(files.map((f) => ({ name: f.name, blob: f })));
   e.target.value = "";
 });
+
+// Sample set (scripts/make_sample_tag_photos.py): tags 0-3, 160 mm, six views, one with id 3 cut off.
+async function checkSamples() {
+  $("progress").textContent = "Fetching the sample photos…";
+  try {
+    const index = await (await fetch("samples/tag_photos.json?v=1")).json();
+    $("ids").value = index.ids.join(", "); readIds();
+    const items = await Promise.all(index.photos.map(async (p) => {
+      const r = await fetch(`samples/${p.name}?v=1`);
+      if (!r.ok) throw new Error(`${p.name}: HTTP ${r.status}`);
+      return { name: p.name, blob: await r.blob() };
+    }));
+    return await checkPhotos(items);
+  } catch (err) { $("progress").textContent = `Could not load the sample photos: ${err.message || err}`; return false; }
+}
+$("sampleBtn").onclick = () => checkSamples();
+window.__tags = { checkPhotos, checkSamples, results: () => photoResults.map((p) => ({ ...p, tags: p.tags.map(({ corners, ...t }) => t) })),
+                  verdict: () => $("verdict").textContent };
 
 function addRow(p) {
   const tr = document.createElement("tr");

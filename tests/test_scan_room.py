@@ -370,7 +370,7 @@ def page():
     with sync_playwright() as p:
         b = p.chromium.launch(executable_path=CHROME, headless=True, args=["--use-angle=swiftshader", "--enable-unsafe-swiftshader"])
         pg = b.new_page(viewport={"width": 800, "height": 450})
-        pg.goto(f"http://127.0.0.1:{srv.server_address[1]}/tagar.html")
+        pg.goto(f"http://127.0.0.1:{srv.server_address[1]}/tagar.html?samples=0")
         pg.wait_for_function("window.__tagar && window.AR", timeout=30000)
         yield pg
         b.close()

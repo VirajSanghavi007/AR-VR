@@ -184,3 +184,16 @@ export function fileUnits(kind, objUnits = null) {
   if (kind === "obj") return objUnits;
   return null;
 }
+
+// ---------- sample files, so the page works with nothing picked (while testing) ----------
+// Loaded on page open unless the address has ?samples=0 (or off / false / no). A file the user picks
+// replaces them. along / height: where the tags sit on the room's back wall, filled only if empty.
+export const SAMPLES = {
+  model: { url: "models/sample_sketchup_pergola.dae?v=1", name: "sample_sketchup_pergola.dae", units: "auto" },
+  room: { url: "models/office_scan_room.dae?v=1", name: "office_scan_room.dae", units: "auto", wall: "back",
+          along: "1.20", height: "1.10" },
+};
+export function samplesOn(search) {
+  const v = new URLSearchParams(search || "").get("samples");
+  return v === null || !["0", "off", "false", "no"].includes(v.trim().toLowerCase());
+}

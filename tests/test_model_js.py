@@ -302,7 +302,7 @@ def test_page_wires_sketchup_files():
     for hook in ['import { ColladaLoader } from "three/addons/loaders/ColladaLoader.js";',
                  'import { OBJLoader } from "three/addons/loaders/OBJLoader.js";',
                  'import { MTLLoader } from "three/addons/loaders/MTLLoader.js";',
-                 'modelKind, pickModelFiles, baseName, objFileUnits, fileUnits } from "./model.js?v=3";',
+                 'modelKind, pickModelFiles, baseName, objFileUnits, fileUnits, SAMPLES, samplesOn } from "./model.js?v=4";',
                  "mgr.setURLModifier((u) => side[baseName(u)] || u);", "m.side = THREE.DoubleSide;",
                  "return readModel(url, name, side).then(", "pickedModel($(\"m-file\").files)", "pickedModel($(\"r-file\").files)",
                  "model.fileUnits || guessUnits(", "room.fileUnits || guessUnits(", 'id="m-sketchup"', '<option value="ft">feet</option>']:

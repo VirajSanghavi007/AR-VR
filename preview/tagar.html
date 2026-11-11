@@ -114,6 +114,9 @@ label.f input[type=file] { font: .85rem var(--sans); padding: 6px; }
       <p class="label">Panel type</p>
       <div class="seg looks" role="group" aria-label="Panel type" id="looks"></div>
     </div>
+    <p class="note" id="samples-note" hidden>Testing: a sample model (solar pergola) and a sample room (scanned office, tags on its back wall
+      1.20 m from the left corner, 1.10 m up) are already loaded below. Pick your own files to replace them, or open the page as
+      <a href="?samples=0">tagar.html?samples=0</a> to start empty.</p>
     <p class="note">Tag size is the black square's edge. It is only a check: the app measures each tag in AR and warns if the surface was misjudged.</p>
   </div>
 
@@ -232,8 +235,9 @@ import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
 import { UNIT_M, guessUnits, realSize, fmtSize, seat, mountTurnX, clampPct, clampDeg, rulerTicks, rulerStart,
          poseFileName, poseRecord, parsePose, sameTags,
          wallFace, wallYaw, nextWall, parseLen, roomOffset, roomCheck,
-         modelKind, pickModelFiles, baseName, objFileUnits, fileUnits } from "./model.js?v=3";
+         modelKind, pickModelFiles, baseName, objFileUnits, fileUnits, SAMPLES, samplesOn } from "./model.js?v=4";
 import { composite, caption, shotName } from "./snap.js?v=2";
+import { mergeNested } from "./tagcheck.js?v=2";
 
 const DETECT_EVERY_MS = 250, FOLLOW_EVERY_MS = 400, HIT_GRACE_MS = 500, MAX_ANGLE_ERR = 12, EDGE_WARN = 0.15;
 const TILT_DEG = 15, TOUCH_SLOP_M = 0.012, PANEL_STEP = Math.PI / 12;
@@ -701,7 +705,7 @@ function detectRect(frame, view) {
   // a mirrored tag never decodes, so the row order that decodes is the upright one
   if (!found.length) { if (!flipKnown) flipY = !flipY; return "Aim at the tags so all of them are in view"; }
   flipKnown = true;
-  const pick = chooseTags(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) })));
+  const pick = chooseTags(mergeNested(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) }))));
   if (!pick.ok) return pick.why + (pick.found === 1 ? ": step back so the others fit too" : "");
   const key = pick.tags.map((t) => t.id).join(","), count = pick.tags.length, now = performance.now();
   if (rect) {
@@ -953,9 +957,12 @@ function pickedModel(files) {
   return { url: side[list[main].name.toLowerCase()], name: list[main].name, side };
 }
 
+let modelLoads = 0, roomLoads = 0;                         // only the newest pick counts (a slow sample must not replace it)
 function loadModel(url, name, side = {}) {
   $("m-info").textContent = `Loading ${name}…`;
+  const n = ++modelLoads;
   return readModel(url, name, side).then(({ obj, fileUnits: fu }) => {
+    if (n !== modelLoads) return null;
     obj.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     const sizeRaw = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3()).toArray();
     try { guessUnits(Math.max(...sizeRaw)); } catch (e) { $("m-info").textContent = `${name}: ${e.message}`; return null; }
@@ -965,7 +972,7 @@ function loadModel(url, name, side = {}) {
     describeModel();
     if (rect) { setButtons(true); place(); }
     return modelState();
-  }, (e) => { $("m-info").textContent = `Could not load ${name}: ${e.message || e}`; return null; });
+  }, (e) => { if (n === modelLoads) $("m-info").textContent = `Could not load ${name}: ${e.message || e}`; return null; });
 }
 
 function describeModel() {
@@ -1121,7 +1128,9 @@ const ROOM_EDGE = new THREE.LineBasicMaterial({ color: 0x29d3ff });
 
 function loadRoom(url, name, side = {}) {
   $("r-info").textContent = `Loading ${name}…`;
+  const n = ++roomLoads;
   return readModel(url, name, side).then(({ obj, fileUnits: fu }) => {
+    if (n !== roomLoads) return null;
     const meshes = [];
     obj.traverse((o) => { if (o.isMesh) meshes.push(o); });
     for (const m of meshes) {                                  // walls are seen from inside: both sides, no shadows
@@ -1136,7 +1145,7 @@ function loadRoom(url, name, side = {}) {
     describeRoom();
     if (rect) { setButtons(true); place(); }
     return roomState();
-  }, (e) => { $("r-info").textContent = `Could not load ${name}: ${e.message || e}`; return null; });
+  }, (e) => { if (n === roomLoads) $("r-info").textContent = `Could not load ${name}: ${e.message || e}`; return null; });
 }
 
 function describeRoom() {
@@ -1459,7 +1468,21 @@ window.__tagar = {
              disabled: BUTTONS.filter((id) => $(id).disabled), design: { ...design },
              hud: $("hud").textContent };
   },
+  samples: () => samplesLoaded,
 };
+
+// While testing: the sample model and room load on their own, so nothing has to be picked first.
+// ?samples=0 starts empty. Either is replaced by a file picked or a button pressed meanwhile.
+function loadSamples() {
+  const m = SAMPLES.model, r = SAMPLES.room;
+  $("m-units").value = m.units; $("r-units").value = r.units;
+  roomPos.wall = $("r-wall").value = r.wall;
+  if (!$("r-along").value.trim()) $("r-along").value = r.along;
+  if (!$("r-height").value.trim()) $("r-height").value = r.height;
+  $("samples-note").hidden = false;
+  return Promise.all([loadModel(m.url, m.name), loadRoom(r.url, r.name)]);
+}
+const samplesLoaded = samplesOn(location.search) ? loadSamples() : Promise.resolve(null);
 </script>
 </body>
 </html>
