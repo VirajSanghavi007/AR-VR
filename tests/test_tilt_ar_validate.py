@@ -293,3 +293,94 @@ def test_anchor_data_in_glb_frame(tmp_path):
     import json as _json
     path = A.write_anchor(tmp_path / "a.json", frame, outline, None)
     assert _json.loads(path.read_text())["keepouts"] == []
+
+
+def _glb_json(b):
+    import json
+    import struct
+    n = struct.unpack("<I", b[12:16])[0]
+    return json.loads(b[20:20 + n])
+
+
+def test_glb_bytes_writes_unit_normals_only_when_every_part_has_them():
+    import struct
+    v = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], float)
+    t = np.array([[0, 1, 2]])
+    mats = {"a": A.Material((1, 0, 0)), "b": A.Material((0, 1, 0))}
+    b = A.glb_bytes([(v, t, None, "a", np.tile([0, 0, 2.0], (3, 1))),
+                     (v + 1, t, None, "b", np.tile([0, 0, 1.0], (3, 1))), (v, t, None, "b")], mats)
+    g = _glb_json(b)
+    prims = {g["materials"][p["material"]]["name"]: p for p in g["meshes"][0]["primitives"]}
+    assert "NORMAL" in prims["a"]["attributes"] and "NORMAL" not in prims["b"]["attributes"]
+    acc = g["accessors"][prims["a"]["attributes"]["NORMAL"]]
+    assert acc["count"] == 3 and acc["type"] == "VEC3"
+    view = g["bufferViews"][acc["bufferView"]]
+    n = struct.unpack("<I", b[12:16])[0]
+    start = 20 + n + 8 + view.get("byteOffset", 0) + acc.get("byteOffset", 0)
+    arr = np.frombuffer(b[start:start + 36], "<f4").reshape(3, 3)
+    assert np.allclose(arr, [0, 0, 1])
+
+
+def test_glb_bytes_tiled_textures_use_a_repeat_sampler():
+    png = A.cell_texture_png(width=64, cols=2, rows=1)
+    v = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], float)
+    t = np.array([[0, 1, 2]])
+    uv = np.array([[0, 0], [3, 0], [0, 3]], float)
+    mats = {"a": A.Material((1, 1, 1), texture=png, tile=True), "b": A.Material((1, 1, 1), texture=png)}
+    g = _glb_json(A.glb_bytes([(v, t, uv, "a"), (v, t, uv, "b")], mats))
+    assert g["samplers"][1]["wrapS"] == 10497 and g["samplers"][1]["wrapT"] == 10497
+    assert g["samplers"][0]["wrapS"] != 10497
+    by = {m["name"]: g["textures"][m["pbrMetallicRoughness"]["baseColorTexture"]["index"]]["sampler"]
+          for m in g["materials"]}
+    assert by == {"a": 1, "b": 0}
+
+
+def test_image_mime_knows_png_and_jpeg_only():
+    from rooftop.textures import jpeg
+    assert A.image_mime(A.cell_texture_png(width=64, cols=2, rows=1)) == "image/png"
+    assert A.image_mime(jpeg(np.zeros((4, 4, 3), np.uint8))) == "image/jpeg"
+    for bad in (b"GIF89a....", b"\x89PNG\r\n\x1a", b"\xff\xd8", b""):
+        with pytest.raises(ValueError, match="PNG or JPEG"):
+            A.image_mime(bad)
+
+
+def test_glb_bytes_embeds_jpeg_albedo_and_normal_maps():
+    import struct
+    from rooftop.textures import jpeg
+    alb, nrm = jpeg(np.full((8, 8, 3), 200, np.uint8)), jpeg(np.full((8, 8, 3), [128, 128, 255], np.uint8))
+    v = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], float)
+    t = np.array([[0, 1, 2]])
+    uv = np.array([[0, 0], [2, 0], [0, 2]], float)
+    mats = {"both": A.Material((1, 1, 1), texture=alb, tile=True, normal=nrm),
+            "bump": A.Material((0.5, 0.5, 0.5), normal=nrm, tile=True),
+            "flat": A.Material((0.2, 0.2, 0.2))}
+    b = A.glb_bytes([(v, t, uv, "both"), (v, t, uv, "bump"), (v, t, uv, "flat")], mats)
+    g = _glb_json(b)
+    m = {x["name"]: x for x in g["materials"]}
+    assert "baseColorTexture" in m["both"]["pbrMetallicRoughness"] and "normalTexture" in m["both"]
+    assert "baseColorTexture" not in m["bump"]["pbrMetallicRoughness"] and "normalTexture" in m["bump"]
+    assert "normalTexture" not in m["flat"] and "baseColorTexture" not in m["flat"]["pbrMetallicRoughness"]
+    assert m["bump"]["pbrMetallicRoughness"]["baseColorFactor"] == [0.5, 0.5, 0.5, 1.0]
+    assert [i["mimeType"] for i in g["images"]] == ["image/jpeg"] * 3
+    prims = {g["materials"][p["material"]]["name"]: p for p in g["meshes"][0]["primitives"]}
+    assert "TEXCOORD_0" in prims["both"]["attributes"] and "TEXCOORD_0" in prims["bump"]["attributes"]
+    assert "TEXCOORD_0" not in prims["flat"]["attributes"]
+    # the normal map's bytes are what was given, in its own texture on the repeat sampler
+    tex = g["textures"][m["bump"]["normalTexture"]["index"]]
+    assert tex["sampler"] == 1
+    view = g["bufferViews"][g["images"][tex["source"]]["bufferView"]]
+    n = struct.unpack("<I", b[12:16])[0]
+    start = 20 + n + 8 + view["byteOffset"]
+    assert b[start:start + view["byteLength"]] == nrm
+
+    def tex_bytes(ref):
+        view = g["bufferViews"][g["images"][g["textures"][ref["index"]]["source"]]["bufferView"]]
+        return b[20 + n + 8 + view["byteOffset"]:][:view["byteLength"]]
+    # with both maps, each slot holds its own image
+    assert tex_bytes(m["both"]["normalTexture"]) == nrm
+    assert tex_bytes(m["both"]["pbrMetallicRoughness"]["baseColorTexture"]) == alb
+    uvacc = g["accessors"][prims["bump"]["attributes"]["TEXCOORD_0"]]
+    uview = g["bufferViews"][uvacc["bufferView"]]
+    got = np.frombuffer(b[20 + n + 8 + uview["byteOffset"]:][:24], "<f4").reshape(3, 2)
+    assert np.allclose(got, uv) and uvacc["type"] == "VEC2" and uvacc["count"] == 3
+    assert len(b) % 4 == 0 and struct.unpack("<I", b[8:12])[0] == len(b)

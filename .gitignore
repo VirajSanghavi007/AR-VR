@@ -9,5 +9,6 @@ data/*
 !data/rooftop_01/
 data/rooftop_01/*
 !data/rooftop_01/measurements.json
+!data/sample_roof/
 tools/
 outputs/

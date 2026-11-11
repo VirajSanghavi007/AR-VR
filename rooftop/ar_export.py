@@ -30,7 +30,18 @@ class Material:
     rgb: tuple
     metallic: float = 0.0
     roughness: float = 0.6
-    texture: bytes = None    # PNG bytes for baseColorTexture
+    texture: bytes = None    # PNG or JPEG bytes for baseColorTexture
+    tile: bool = False       # texture repeats (world-metre UVs) instead of clamping
+    normal: bytes = None     # PNG or JPEG tangent-space normalTexture (same UVs, same sampler)
+
+
+def image_mime(data):
+    """glTF mimeType of embedded image bytes (PNG or JPEG, the two glTF allows)."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    raise ValueError("embedded textures must be PNG or JPEG")
 
 
 def cell_texture_png(width=1536, cols=20, rows=6, busbars=9):
@@ -140,14 +151,19 @@ def _pad4(b, fill=b"\x00"):
 
 def glb_bytes(parts, materials):
     """Minimal glTF 2.0 binary: one primitive per material, uint32 indices,
-    optional TEXCOORD_0 + embedded PNG baseColorTexture.
+    optional TEXCOORD_0 + embedded PNG/JPEG baseColorTexture and normalTexture, optional NORMAL.
 
-    parts: [(vertices (N,3) y-up metres, triangles (M,3), uv (N,2) or None, material key)]
+    parts: [(vertices (N,3) y-up metres, triangles (M,3), uv (N,2) or None, material key
+    [, normals (N,3) y-up])]. NORMAL is written for a material only when every one of its
+    parts has normals.
     Open3D's own .glb writer produces out-of-range buffer views, hence this.
     """
     groups = {}
-    for v, t, uv, key in parts:
-        g = groups.setdefault(key, {"v": [], "t": [], "uv": [], "n": 0})
+    for part in parts:
+        v, t, uv, key = part[:4]
+        nrm = part[4] if len(part) > 4 else None
+        g = groups.setdefault(key, {"v": [], "t": [], "uv": [], "nrm": [], "n": 0})
+        g["nrm"].append(None if nrm is None else np.asarray(nrm, np.float32))
         g["v"].append(np.asarray(v, np.float32))
         g["t"].append(np.asarray(t, np.uint32) + g["n"])
         g["uv"].append(np.asarray(uv, np.float32) if uv is not None else np.zeros((len(v), 2), np.float32))
@@ -172,20 +188,34 @@ def glb_bytes(parts, materials):
         accessors.append({"bufferView": add_view(pos.tobytes(), 34962), "componentType": 5126,
                           "count": len(pos), "type": "VEC3",
                           "min": pos.min(0).tolist(), "max": pos.max(0).tolist()})
+        if all(n is not None for n in g["nrm"]):
+            nrm = np.vstack(g["nrm"])
+            nrm /= np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-12)
+            attrs["NORMAL"] = len(accessors)
+            accessors.append({"bufferView": add_view(nrm.astype(np.float32).tobytes(), 34962),
+                              "componentType": 5126, "count": len(nrm), "type": "VEC3"})
         pbr = {"baseColorFactor": [*m.rgb, 1.0], "metallicFactor": m.metallic,
                "roughnessFactor": m.roughness}
-        if m.texture is not None:
+        mat = {"name": key, "pbrMetallicRoughness": pbr, "doubleSided": True}
+
+        def add_tex(data):
+            images.append({"bufferView": add_view(data), "mimeType": image_mime(data)})
+            textures.append({"source": len(images) - 1, "sampler": 1 if m.tile else 0})
+            return {"index": len(textures) - 1}
+
+        if m.texture is not None or m.normal is not None:
             uv = np.vstack(g["uv"])
             attrs["TEXCOORD_0"] = len(accessors)
             accessors.append({"bufferView": add_view(uv.tobytes(), 34962), "componentType": 5126,
                               "count": len(uv), "type": "VEC2"})
-            images.append({"bufferView": add_view(m.texture), "mimeType": "image/png"})
-            textures.append({"source": len(images) - 1, "sampler": 0})
-            pbr["baseColorTexture"] = {"index": len(textures) - 1}
+        if m.texture is not None:
+            pbr["baseColorTexture"] = add_tex(m.texture)
+        if m.normal is not None:
+            mat["normalTexture"] = add_tex(m.normal)
         idx_acc = len(accessors)
         accessors.append({"bufferView": add_view(idx.tobytes(), 34963), "componentType": 5125,
                           "count": int(idx.size), "type": "SCALAR"})
-        mats.append({"name": key, "pbrMetallicRoughness": pbr, "doubleSided": True})
+        mats.append(mat)
         prims.append({"attributes": attrs, "indices": idx_acc, "material": len(mats) - 1, "mode": 4})
 
     gltf = {"asset": {"version": "2.0", "generator": "rooftop.ar_export"},
@@ -194,7 +224,8 @@ def glb_bytes(parts, materials):
             "accessors": accessors, "bufferViews": views, "buffers": [{"byteLength": len(blob)}]}
     if images:
         gltf.update(images=images, textures=textures,
-                    samplers=[{"magFilter": 9729, "minFilter": 9987, "wrapS": 33071, "wrapT": 33071}])
+                    samplers=[{"magFilter": 9729, "minFilter": 9987, "wrapS": 33071, "wrapT": 33071},
+                              {"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497}])
     js = _pad4(json.dumps(gltf, separators=(",", ":")).encode(), b" ")
     total = 12 + 8 + len(js) + 8 + len(blob)
     return (struct.pack("<4sII", b"glTF", 2, total)

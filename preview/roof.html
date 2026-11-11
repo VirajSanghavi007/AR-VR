@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Your Solar Roof</title>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<style>
+:root { --bg:#0e141b; --fg:#f2f5f8; --accent:#2f6bff; --panel:rgba(14,20,27,.78); --sans: system-ui, -apple-system, "Segoe UI", sans-serif; }
+html, body { margin:0; height:100%; background:var(--bg); color:var(--fg); font-family:var(--sans); overflow:hidden; }
+canvas { display:block; touch-action:none; }
+#hud { position:fixed; top:12px; left:16px; max-width:calc(100% - 32px); padding:8px 12px; border-radius:10px; background:var(--panel); font-size:14px; line-height:1.45; }
+#hud b { font-size:15px; }
+#sliders { position:fixed; left:16px; right:16px; bottom:calc(64px + env(safe-area-inset-bottom)); display:grid; grid-template-columns:auto 1fr; gap:4px 10px; align-items:center;
+           padding:8px 12px; border-radius:10px; background:var(--panel); font-size:13px; max-width:520px; }
+#sliders input { width:100%; accent-color:var(--accent); }
+#bar, #arbar { position:fixed; left:0; right:0; bottom:0; display:flex; gap:8px; padding:10px 16px calc(10px + env(safe-area-inset-bottom)); background:var(--panel); }
+#arbar { display:none; background:none; }
+#arbar.show { display:flex; }
+.hide { display:none !important; }
+button { flex:1; padding:11px 6px; border:0; border-radius:8px; background:#2a3542; color:#fff; font:600 14px var(--sans); }
+button[aria-pressed="true"], button.main { background:var(--accent); }
+#msg { position:fixed; top:84px; left:16px; right:16px; font-size:13px; color:#ffd27a; pointer-events:none; }
+body.still #hud, body.still #sliders, body.still #bar, body.still #msg { display:none; }
+</style>
+</head>
+<body>
+<div id="hud"><b id="hudSize">Loading your roof...</b><br><span id="hudSun"></span></div>
+<div id="msg"></div>
+<div id="sliders">
+  <label for="sMonth">Month</label><input id="sMonth" type="range" min="1" max="12" step="1" value="12">
+  <label for="sHour">Time</label><input id="sHour" type="range" min="5" max="19.5" step="0.25" value="12.5">
+</div>
+<div id="bar">
+  <button id="bOrbit">Orbit</button>
+  <button id="bBefore" aria-pressed="false">Before</button>
+  <button id="bNeighbour" aria-pressed="false">Neighbour</button>
+  <button id="bAR" class="main">AR</button>
+</div>
+<div id="arbar">
+  <button id="bArSize">Full size</button>
+  <button id="bArMove">Move</button>
+  <button id="bArExit" class="main">Exit AR</button>
+</div>
+<script type="module">
+import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { Sky } from "three/addons/objects/Sky.js";
+import { lookByKey } from "./panel.js?v=9";
+import { drawStandardFace, faceSize } from "./panelface.js?v=1";
+import { sunFor, sunStrength, yearly, hud, noonFor, planBounds, shots, SHOT_NAMES, neighbour, toWorld } from "./roofview.js?v=1";
+
+// The customer's roof (Phase 2): the detailed model made from their AutoCAD drawing
+// (scripts/phase2_solar.py --dxf ... --detailed --publish), lit by the real sun for their site.
+const $ = (id) => document.getElementById(id);
+const Q = new URLSearchParams(location.search);
+const GLB = Q.get("glb") || "models/rooftop_detailed.glb";
+const JSON_URL = Q.get("json") || GLB.replace(/\.glb$/, ".json");
+const SUN_HOURS = +(Q.get("sunHours") || 5);              // peak sun hours a day; about 5 for Mumbai
+if (Q.get("still") === "1") document.body.classList.add("still");
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.6;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const sky = new Sky();
+sky.scale.setScalar(4000);
+Object.assign(sky.material.uniforms, {
+  turbidity: { value: 3.5 }, rayleigh: { value: 1.4 }, mieCoefficient: { value: 0.004 }, mieDirectionalG: { value: 0.82 },
+});
+scene.add(sky);
+const pmrem = new THREE.PMREMGenerator(renderer);
+let envRT = null;
+scene.fog = new THREE.Fog(0xc4d6e6, 120, 600);
+
+const sun = new THREE.DirectionalLight(0xfff0d8, 3.2);
+sun.castShadow = true;
+sun.shadow.mapSize.set(4096, 4096);
+sun.shadow.bias = -0.0002; sun.shadow.normalBias = 0.03;
+sun.shadow.radius = 3;
+const hemi = new THREE.HemisphereLight(0xe8eef4, 0x6b7a5a, 0.4);
+scene.add(sun, sun.target, hemi);
+
+const world = new THREE.Group();          // the roof model + neighbour, moved and scaled for AR
+scene.add(world);
+const state = { info: null, month: 12, hour: 12.5, sun: null, before: false, neighbour: false, panels: 0, ready: false };
+const parts = {};                         // material name -> meshes (glass, frame, galv, ...)
+let centre = new THREE.Vector3(9, 0, -6), radius = 20, panelAt = [9, 0.5, -3];
+
+// Sun: light, sky and the reflections all follow the month and time sliders.
+function setSun(month, hour) {
+  state.month = month; state.hour = hour;
+  if (!state.info) return null;
+  const s = sunFor(state.info, month, hour);
+  state.sun = s;
+  const d = new THREE.Vector3(...s.dir);
+  sky.material.uniforms.sunPosition.value.copy(d);
+  sun.intensity = sunStrength(s.alt);
+  sun.visible = s.up;
+  hemi.intensity = 0.12 + 0.3 * Math.min(1, Math.max(0, s.alt / 30));
+  const c = world.localToWorld(centre.clone()), k = world.scale.x;
+  sun.target.position.copy(c);
+  sun.position.copy(d).multiplyScalar(80 * k).add(c);
+  const r = radius * k;
+  Object.assign(sun.shadow.camera, { left: -r, right: r, top: r, bottom: -r, near: 20 * k, far: 200 * k });
+  sun.shadow.camera.updateProjectionMatrix();
+  if (envRT) envRT.dispose();
+  const keep = world.visible; world.visible = false;      // reflections of the sky only
+  envRT = pmrem.fromScene(scene, 0, 0.1, 10000); scene.environment = envRT.texture;
+  world.visible = keep;
+  $("sMonth").value = month; $("sHour").value = hour;
+  const [a, b] = hud(state.panels, state.watts, s, month, hour, SUN_HOURS);
+  $("hudSize").textContent = a; $("hudSun").textContent = b;
+  return { alt: s.alt, az: s.az, dir: s.dir, up: s.up };
+}
+$("sMonth").oninput = () => setSun(+$("sMonth").value, state.hour);
+$("sHour").oninput = () => setSun(state.month, +$("sHour").value);
+
+// The Standard face from panelface.js, turned a quarter so the canvas x runs along the panel's long
+// side: the GLB glass UVs have u along the long edge (rooftop/ar_export.py laminate_quad).
+function panelFace() {
+  const look = lookByKey("standard"), { W, H } = faceSize(look);
+  const c = document.createElement("canvas"); c.width = H; c.height = W;
+  const g = c.getContext("2d");
+  g.translate(H, 0); g.rotate(Math.PI / 2);
+  drawStandardFace(g, look, W, H);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace; t.flipY = false; t.anisotropy = 8;
+  return t;
+}
+
+// Before: the roof as it is today, without panels, rails or the inverter.
+const SOLAR = ["glass", "frame", "galv", "inverter"];
+function setBefore(on) {
+  state.before = on;
+  SOLAR.forEach((n) => (parts[n] || []).forEach((m) => (m.visible = !on)));
+  $("bBefore").setAttribute("aria-pressed", String(on));
+  $("bBefore").textContent = on ? "After" : "Before";
+  return on;
+}
+$("bBefore").onclick = () => setBefore(!state.before);
+
+let block = null;
+function setNeighbour(on) {
+  state.neighbour = on;
+  if (on && !block && state.info) {
+    const n = neighbour(state.info), base = state.info.building_base ?? -9;
+    block = new THREE.Mesh(new THREE.BoxGeometry(n.sx, n.h, n.sy),
+      new THREE.MeshStandardMaterial({ color: 0xcfc6b6, roughness: 0.9 }));
+    const p = toWorld([n.x, n.y, base + n.h / 2]);
+    block.position.set(...p); block.castShadow = block.receiveShadow = true; block.name = "neighbour";
+    world.add(block);
+  }
+  if (block) block.visible = on;
+  $("bNeighbour").setAttribute("aria-pressed", String(on));
+  return on;
+}
+$("bNeighbour").onclick = () => setNeighbour(!state.neighbour);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 8000);
+const orbit = new OrbitControls(camera, renderer.domElement);
+orbit.enableDamping = true;
+const MIN_POLAR = Math.PI * 0.495;                  // just above the ground plane
+orbit.maxPolarAngle = MIN_POLAR;
+let SHOTS = null;
+function shot(name) {
+  const s = SHOTS[name];
+  camera.position.set(...s.pos); orbit.target.set(...s.target); camera.fov = s.fov;
+  // the orbit keeps the camera above the target's horizon; let a street-level shot look up
+  const d = camera.position.clone().sub(orbit.target);
+  orbit.maxPolarAngle = Math.max(MIN_POLAR, Math.acos(d.y / d.length()) + 1e-6);
+  camera.updateProjectionMatrix(); orbit.update();
+  return name;
+}
+$("bOrbit").onclick = () => shot("aerial");
+
+// Ground round the building, under the model's own site apron.
+const grass = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200), new THREE.MeshStandardMaterial({ color: 0x5f7d45, roughness: 1 }));
+grass.rotation.x = -Math.PI / 2; grass.receiveShadow = true;
+scene.add(grass);
+
+Promise.all([fetch(JSON_URL).then((r) => r.json()), new GLTFLoader().loadAsync(GLB)]).then(([info, gltf]) => {
+  state.info = info;
+  const face = panelFace();
+  gltf.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    o.castShadow = o.receiveShadow = true;
+    const name = o.material.name;
+    (parts[name] = parts[name] || []).push(o);
+    if (name === "glass") {
+      state.panels += o.geometry.attributes.position.count / 4;
+      o.material = new THREE.MeshPhysicalMaterial({ name: "glass", map: face, roughness: 0.18, metalness: 0.05,
+        clearcoat: 0.6, clearcoatRoughness: 0.05, envMapIntensity: 0.9 });
+    } else if (name === "window") {
+      o.material.roughness = 0.05; o.material.envMapIntensity = 1.2;
+    }
+  });
+  world.add(gltf.scene);
+  state.panels = Math.round(state.panels);
+  state.watts = state.panels ? (info.peak_kw * 1000) / state.panels : 0;
+  const b = planBounds(info.cells);
+  centre = new THREE.Vector3(...toWorld([(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, 0]));
+  radius = Math.hypot(b.x1 - b.x0, b.y1 - b.y0) * 0.5 + 12;
+  grass.position.y = (info.building_base ?? -9) - 0.02;
+  const g = parts.glass && parts.glass[0];
+  if (g) {
+    g.geometry.computeBoundingBox();
+    const p = g.geometry.attributes.position, mid = Math.floor(p.count / 8) * 4;   // a panel near the middle of the list
+    const v = new THREE.Vector3();
+    for (let i = 0; i < 4; i++) v.add(new THREE.Vector3().fromBufferAttribute(p, mid + i));
+    panelAt = v.multiplyScalar(0.25).toArray();
+  }
+  SHOTS = shots(info, panelAt);
+  const m = +(Q.get("month") || 12), h = Q.get("hour") ? +Q.get("hour") : Math.round(noonFor(info, m) * 4) / 4;
+  shot(Q.get("shot") || "aerial");
+  setSun(m, h);
+  if (Q.get("neighbour") === "1") setNeighbour(true);
+  if (Q.get("before") === "1") setBefore(true);
+  state.ready = true;
+}).catch((e) => { $("hudSize").textContent = `Could not load ${GLB}: ${e.message}`; });
+
+// AR: the roof on a table (3 cm per metre, so the 18 m roof is 54 cm) or at full size, as in vr.html.
+const AR_TABLE = 0.03;
+const ar = { scale: AR_TABLE, at: null, placed: false, session: null };
+function placeAt(p, scale) {
+  ar.at = new THREE.Vector3().fromArray(p); ar.scale = scale; ar.placed = true;
+  world.scale.setScalar(scale);
+  world.position.copy(ar.at).sub(new THREE.Vector3(centre.x, 0, centre.z).multiplyScalar(scale));
+  setSun(state.month, state.hour);
+  $("bArSize").textContent = scale === 1 ? "Table size" : "Full size";
+  world.updateMatrixWorld(true);
+  const bx = new THREE.Box3().setFromObject(world);
+  return { scale, at: p, size: bx.getSize(new THREE.Vector3()).toArray() };
+}
+$("arbar").addEventListener("beforexrselect", (e) => e.preventDefault());
+$("bArSize").onclick = () => {
+  const next = ar.scale === 1 ? AR_TABLE : 1;
+  if (ar.placed) placeAt(ar.at.toArray(), next); else { ar.scale = next; $("bArSize").textContent = next === 1 ? "Table size" : "Full size"; }
+};
+$("bArMove").onclick = () => { ar.placed = false; };
+$("bArExit").onclick = () => ar.session && ar.session.end();
+$("bAR").onclick = async () => {
+  if (!navigator.xr || !(await navigator.xr.isSessionSupported("immersive-ar").catch(() => false))) {
+    $("msg").textContent = "AR needs Chrome on an ARCore Android phone.";
+    return;
+  }
+  const session = await navigator.xr.requestSession("immersive-ar",
+    { requiredFeatures: ["hit-test"], optionalFeatures: ["dom-overlay"], domOverlay: { root: document.body } });
+  ar.session = session;
+  renderer.xr.enabled = true;
+  await renderer.xr.setSession(session);
+  scene.background = null; scene.fog = null; sky.visible = false; grass.visible = false;
+  world.visible = false;
+  const reticle = new THREE.Mesh(new THREE.RingGeometry(0.06, 0.08, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x2f6bff }));
+  reticle.matrixAutoUpdate = false; reticle.visible = false; scene.add(reticle);
+  const src = await session.requestHitTestSource({ space: await session.requestReferenceSpace("viewer") });
+  session.addEventListener("select", () => {
+    if (!reticle.visible || ar.placed) return;
+    const p = new THREE.Vector3(); reticle.matrix.decompose(p, new THREE.Quaternion(), new THREE.Vector3());
+    placeAt(p.toArray(), ar.scale); world.visible = true; reticle.visible = false;
+  });
+  session.addEventListener("end", () => location.reload());
+  renderer.setAnimationLoop((t, frame) => {
+    if (frame && !ar.placed) {
+      const hit = frame.getHitTestResults(src)[0];
+      reticle.visible = !!hit;
+      if (hit) reticle.matrix.fromArray(hit.getPose(renderer.xr.getReferenceSpace()).transform.matrix);
+    }
+    renderer.render(scene, camera);
+  });
+  ar.placed = false;
+  $("bar").classList.add("hide"); $("sliders").classList.add("hide"); $("arbar").classList.add("show");
+  $("msg").textContent = "Point at the floor or a table, tap to place the roof.";
+};
+
+let frames = 0;
+renderer.setAnimationLoop(() => {
+  if (renderer.xr.isPresenting) return;
+  orbit.update();
+  renderer.render(scene, camera);
+  frames++;
+});
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+// Hooks for tests and scripts/roof_stills.py.
+window.__roof = {
+  state, parts, camera, orbit, scene, world, sun, setSun, setBefore, setNeighbour, shot, placeAt, SHOT_NAMES,
+  shots: () => SHOTS, frames: () => frames, panelAt: () => panelAt,
+  visible: (name) => (parts[name] || []).some((m) => m.visible),
+  // world (x, z) offset of the shadow tip of a pole h m tall, from the light direction
+  shadowOf: (h) => state.sun && state.sun.up ? [-state.sun.dir[0] / state.sun.dir[1] * h, -state.sun.dir[2] / state.sun.dir[1] * h] : null,
+};
+</script>
+</body>
+</html>

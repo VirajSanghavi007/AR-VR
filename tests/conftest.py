@@ -4,7 +4,7 @@ import http.server
 import pytest
 
 # Browser test files: each runs whole on one xdist worker (one Chrome per file, not one per worker).
-ONE_WORKER = ("tests/test_site_page.py", "tests/test_vr_page.py", "tests/test_tagar_page.py", "tests/test_samples.py",
+ONE_WORKER = ("tests/test_site_page.py", "tests/test_roof_page.py", "tests/test_vr_page.py", "tests/test_tagar_page.py", "tests/test_samples.py",
               "tests/test_scan_room.py", "tests/test_sketchup_sample.py")
 
 # The page tests serve preview/ with ThreadingHTTPServer, whose listen backlog is 5. Chrome opens more module

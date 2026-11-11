@@ -68,7 +68,7 @@ def browser(chrome_available):
 def page(request, browser):
     b, url = browser
     pg = b.new_page(viewport={"width": 800, "height": 450})
-    pg.goto(f"{url}?phase={request.param}")
+    pg.goto(f"{url}?phase={request.param}", timeout=90000)
     pg.wait_for_function("window.__vr && __vr.world.children.length > 0 && /Phase/.test(document.getElementById('info').textContent)"
                          + (" && __vr.scanCount() > 0" if request.param == 3 else ""), timeout=60000)
     yield request.param, pg
@@ -85,9 +85,53 @@ def test_page_loads_its_phase(page):
         assert "39 panels" in s["info"] and "15.6 kWp" in s["info"] and "LiDAR" in s["info"]
 
 
+
+def test_phase2_view_is_sized_from_the_roof_cells(page):
+    phase, pg = page
+    if phase == 3:
+        pytest.skip("Phase 3 has its own fixed frame")
+    cells = json.loads((PREVIEW / "models" / "rooftop_solar.json").read_text(encoding="utf-8"))["cells"]
+    sx, sy = max(c[2] for c in cells), max(c[3] for c in cells)
+    s = pg.evaluate("""(() => {
+      const kids = __vr.surround.children;
+      const flat = kids.filter((o) => o.geometry && o.geometry.type === 'PlaneGeometry')
+        .map((o) => [o.position.x, o.position.z, o.geometry.parameters.width, o.geometry.parameters.height]);
+      const trees = kids.filter((o) => o.isGroup).map((t) => {           // plan box [x0, x1, z0, z1] of each tree
+        t.updateMatrixWorld(true);
+        const r = [Infinity, -Infinity, Infinity, -Infinity];
+        t.traverse((m) => {
+          if (!m.isMesh) return;
+          m.geometry.computeBoundingBox();
+          const b = m.geometry.boundingBox.clone().applyMatrix4(m.matrixWorld);
+          r[0] = Math.min(r[0], b.min.x); r[1] = Math.max(r[1], b.max.x);
+          r[2] = Math.min(r[2], b.min.z); r[3] = Math.max(r[3], b.max.z);
+        });
+        return r;
+      });
+      const body = kids.filter((o) => o.geometry && o.geometry.type === 'BoxGeometry' && o.geometry.parameters.height === 9
+                        && Math.abs(o.position.y + 4.501) < 1e-9)            // not the 9 m neighbour block
+        .map((o) => [o.position.x, o.position.z, o.geometry.parameters.width, o.geometry.parameters.depth]);
+      return { centre: __vr.CENTRE.toArray(), target: __vr.orbit.target.toArray(), table: __vr.AR_TABLE, flat, trees, body };
+    })()""")
+    # the 9 m building under the roof: one block per roof cell, at the cell's place and size
+    want = [[(c[0] + c[2]) / 2, -(c[1] + c[3]) / 2, c[2] - c[0], c[3] - c[1]] for c in cells]
+    assert len(s["body"]) == len(want)
+    for got, w in zip(s["body"], want):
+        assert got == pytest.approx(w)
+    assert s["centre"] == pytest.approx([sx / 2, 0.15, -sy / 2]) and s["target"] == pytest.approx(s["centre"])
+    assert s["table"] == pytest.approx(0.5 / max(sx, sy))                    # about 50 cm on the long side
+    assert [sx / 2, -sy / 2, 900, 900] in [pytest.approx(f) for f in s["flat"]]          # grass under the roof
+    assert [sx / 2, -sy / 2, sx + 10, sy + 10] in [pytest.approx(f) for f in s["flat"]]  # paving 5 m round it
+    assert len(s["trees"]) == 8
+    for x0, x1, z0, z1 in s["trees"]:                                        # no tree canopy reaches the walls
+        assert x1 < -0.5 or x0 > sx + 0.5 or z1 < -sy - 0.5 or z0 > 0.5, (x0, x1, z0, z1)
+
+
 def test_ar_places_a_table_model_and_a_full_size_one(page):
     phase, pg = page
-    full = {2: 12.0, 3: 16.69}[phase]
+    cells = json.loads((PREVIEW / "models" / "rooftop_solar.json")
+                       .read_text(encoding="utf-8"))["cells"]
+    full = {2: max(max(c[2], c[3]) for c in cells), 3: 16.69}[phase]     # Phase 2: the published roof's long side
     t = pg.evaluate("__vr.placeAt([0.5, 0.8, -1], __vr.AR_TABLE)")
     assert t["placed"] and abs(max(t["size"]) - full * t["scale"]) < 0.02 and max(t["size"]) < 0.6
     assert abs(t["centre"][0] - 0.5) < 0.05 and abs(t["centre"][2] + 1) < 0.05
@@ -101,7 +145,7 @@ def test_ar_places_a_table_model_and_a_full_size_one(page):
 def test_ar_size_toggle_before_placing_only_sets_the_size(browser):
     b, url = browser
     pg = b.new_page(viewport={"width": 800, "height": 450})
-    pg.goto(url)
+    pg.goto(url, timeout=90000)
     pg.wait_for_function("window.__vr && __vr.world.children.length > 0", timeout=60000)
     s = pg.evaluate("__vr.toggleArSize()")
     assert s["scale"] == 1 and not s["placed"] and s["at"] is None

@@ -224,6 +224,7 @@ import { PANEL_LOOKS, lookByKey, nextLook, cellLayout, panelHit, twistDelta, isL
          yawDeg, heightMap, borderPx, moveBox, gridLayout, clampCount, arrayBounds, relayout,
          energy, mountParts, turnArray, cellShade, chamferCell, smoothLight,
          contactShadow, contactAlpha, grainFor, cameraLookShader, lightProbeOptions } from "./panel.js?v=9";
+import { drawStandardFace, faceSize } from "./panelface.js?v=1";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { ColladaLoader } from "three/addons/loaders/ColladaLoader.js";
@@ -381,39 +382,10 @@ function panelTexture(look) {
     textures.set(look.key, t);
     return t;
   }
-  // Standard: white backsheet showing between chamfered mono cells, each cell a touch different in
-  // tint with a faint sheen towards its centre, fine silver fingers, thin busbars, a bevelled frame
-  const W = 1024, H = Math.round((W * look.d) / look.w), c = document.createElement("canvas");
+  // Standard: the shared face (panelface.js), the same one roof.html puts on its panels
+  const { W, H } = faceSize(look), c = document.createElement("canvas");
   c.width = W; c.height = H;
-  const g = c.getContext("2d");
-  if (look.gap) { g.fillStyle = look.gap; g.fillRect(0, 0, W, H); }
-  const base = new THREE.Color(look.cell), rgb = (col, k) => `rgb(${[col.r, col.g, col.b].map((v) => Math.round(Math.min(1, v * k) * 255))})`;
-  cellLayout(look).forEach((cell, i) => {
-    const x = cell.x * W, y = cell.y * H, w = cell.w * W, h = cell.h * H, row = Math.floor(i / look.cols);
-    // half-cut: a pair of rows is one wafer, cut across the middle, so only its outer corners are chamfered
-    const top = !look.halfCut || row % 2 === 0, bottom = !look.halfCut || row % 2 === 1;
-    const pts = chamferCell(x, y, w, h, w * 0.07, top, bottom), k = cellShade(i);
-    const sheen = g.createLinearGradient(x, y, x + w, y + h);
-    sheen.addColorStop(0, rgb(base, k * 0.92)); sheen.addColorStop(0.5, rgb(base, k * 1.12)); sheen.addColorStop(1, rgb(base, k * 0.95));
-    g.fillStyle = sheen;
-    g.beginPath(); pts.forEach(([px, py], j) => (j ? g.lineTo(px, py) : g.moveTo(px, py))); g.closePath(); g.fill();
-    g.save(); g.clip();
-    g.fillStyle = "rgba(170,182,196,.10)";                                     // fingers: hair-thin, across the busbars
-    for (let fy = y + 2; fy < y + h; fy += 3.2) g.fillRect(x, fy, w, 0.6);
-    g.fillStyle = look.busbar;
-    for (let k2 = 1; k2 <= 9; k2++) g.fillRect(x + (w * k2) / 10 - 0.6, y, 1.2, h);
-    g.restore();
-  });
-  const f = (look.frameMm / 1000 / look.w) * W, fr = new THREE.Color(look.frame);
-  const bevel = (x0, y0, x1, y1, light) => {                                  // lit outer edge, shaded inner lip
-    const gr = g.createLinearGradient(x0, y0, x1, y1);
-    gr.addColorStop(0, rgb(fr, light ? 1.12 : 0.8)); gr.addColorStop(0.6, rgb(fr, 1)); gr.addColorStop(1, rgb(fr, 0.62));
-    return gr;
-  };
-  g.fillStyle = bevel(0, 0, 0, f, true); g.fillRect(0, 0, W, f);
-  g.fillStyle = bevel(0, H, 0, H - f, false); g.fillRect(0, H - f, W, f);
-  g.fillStyle = bevel(0, 0, f, 0, true); g.fillRect(0, f, f, H - 2 * f);
-  g.fillStyle = bevel(W, 0, W - f, 0, false); g.fillRect(W - f, f, f, H - 2 * f);
+  drawStandardFace(c.getContext("2d"), look, W, H);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
   textures.set(look.key, t);

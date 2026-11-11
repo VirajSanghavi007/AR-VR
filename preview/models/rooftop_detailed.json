@@ -1,0 +1,74 @@
+{
+ "detailed": true,
+ "slab": 0.15,
+ "parapet": 1.0,
+ "cells": [
+  [
+   0.0,
+   0.0,
+   18.0,
+   8.0
+  ],
+  [
+   0.0,
+   8.0,
+   12.0,
+   12.0
+  ]
+ ],
+ "floors": 3,
+ "floor_h": 3.2,
+ "building_base": -9.6,
+ "latitude": 19.07,
+ "longitude": 72.88,
+ "tz": 5.5,
+ "north_deg": 90.0,
+ "facing_deg": 270.0,
+ "tilt_deg": 15.0,
+ "row_gap": 0.6,
+ "features": [
+  {
+   "name": "Stair1",
+   "kind": "stair",
+   "x": 0.8,
+   "y": 8.4,
+   "w": 3.0,
+   "d": 3.2,
+   "h": 2.7,
+   "stand": 0.4
+  },
+  {
+   "name": "Store1",
+   "kind": "store",
+   "x": 4.4,
+   "y": 9.6,
+   "w": 2.4,
+   "d": 2.0,
+   "h": 2.7,
+   "stand": 0.4
+  },
+  {
+   "name": "Tank1",
+   "kind": "tank",
+   "x": 13.4,
+   "y": 6.2,
+   "w": 1.2,
+   "d": 1.2,
+   "h": 2.1,
+   "stand": 0.6
+  },
+  {
+   "name": "Tank2",
+   "kind": "tank",
+   "x": 15.4,
+   "y": 6.2,
+   "w": 1.2,
+   "d": 1.2,
+   "h": 2.1,
+   "stand": 0.6
+  }
+ ],
+ "panels": 41,
+ "panel_w": 550,
+ "peak_kw": 22.55
+}

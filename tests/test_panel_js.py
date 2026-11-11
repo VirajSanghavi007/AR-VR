@@ -441,11 +441,13 @@ def test_page_lights_and_draws_the_panels_realistically():
                  "if (lightProbe) matchLight(frame.getLightEstimate(lightProbe));",
                  "light = smoothLight(light, [i.x, i.y, i.z]);", "sun.color.setRGB(...light.color);",
                  "sun.intensity = light.intensity;", "hemi.intensity = light.intensity * SKY_PER_SUN;",
-                 "const W = 1024, H = Math.round((W * look.d) / look.w)",
-                 "const top = !look.halfCut || row % 2 === 0, bottom = !look.halfCut || row % 2 === 1;",
-                 "chamferCell(x, y, w, h, w * 0.07, top, bottom), k = cellShade(i);", "for (let k2 = 1; k2 <= 9; k2++)",
+                 "const { W, H } = faceSize(look)", "drawStandardFace(c.getContext(\"2d\"), look, W, H);",
                  "cameraLook(new THREE.MeshStandardMaterial({ map, roughness: 0.45, metalness: 0, envMapIntensity: 0.7"):
         assert hook in html, hook
+    face = (PREVIEW / "panelface.js").read_text(encoding="utf-8")         # the face itself is shared
+    for hook in ("const top = !look.halfCut || row % 2 === 0, bottom = !look.halfCut || row % 2 === 1;",
+                 "chamferCell(x, y, w, h, w * 0.07, top, bottom), k = cellShade(i);", "for (let b = 1; b <= 9; b++)"):
+        assert hook in face, hook
     # the sun keeps its place over the tags: the estimate never moves it (a swinging glint was the flicker)
     assert "primaryLightDirection" not in html
 

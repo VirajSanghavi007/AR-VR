@@ -119,14 +119,15 @@ def dominant_angle(outline) -> float:
 
 
 def layout_panels(area, panel_w=1.134, panel_h=1.722, gap=0.02, angle=None, steps=4,
-                  tilt_deg=0.0, facing_deg=None, sun_alt_deg=None):
+                  tilt_deg=0.0, facing_deg=None, sun_alt_deg=None, min_row_gap=0.0):
     """Fill area with panels; try portrait/landscape and grid offsets, keep the max.
 
     Flat (tilt 0): rows align with the roof's long edge unless angle is given.
     Tilted: panels face facing_deg (direction in the roof 2D frame, towards the
     equator), rows run perpendicular to it, each footprint shrinks to
     slope*cos(tilt) and rows are spaced so the winter-noon shadow (sun_alt_deg)
-    clears the next row.
+    clears the next row. min_row_gap: the extra space between rows is at least this
+    (a maintenance walkway).
     """
     if tilt_deg > 0:
         if facing_deg is None or sun_alt_deg is None:
@@ -139,6 +140,7 @@ def layout_panels(area, panel_w=1.134, panel_h=1.722, gap=0.02, angle=None, step
     best = Layout([], "portrait", angle, tilt_deg)
     for name, (w, slope) in (("portrait", (panel_w, panel_h)), ("landscape", (panel_h, panel_w))):
         gap_r = row_shadow_gap(slope, tilt_deg, sun_alt_deg) if tilt_deg > 0 else 0.0
+        gap_r = max(gap_r, min_row_gap)
         panels = _grid(area, w, slope * cos_t, gap, gap_r, angle, offsets)
         if len(panels) > best.count:
             best = Layout(panels, name, angle, tilt_deg,

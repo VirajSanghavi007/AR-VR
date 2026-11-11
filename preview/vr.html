@@ -55,11 +55,15 @@ const $ = (id) => document.getElementById(id);
 // Phase 2: panels laid out on an existing AutoCAD roof. Phase 3: no drawing, the roof CAD is made from a scan
 // (ETH3D terrace laser scan standing in for drone LiDAR, scripts/phase3_preview.py). Same viewer: Orbit, VR, AR.
 const PHASES = {
-  2: { glb: "models/rooftop_solar.glb", json: "models/rooftop_solar.json", centre: [6, 0.15, -4], ground: -9 },
+  2: { glb: "models/rooftop_solar.glb", json: "models/rooftop_solar.json", ground: -9 },   // centre from the roof cells
   3: { glb: "models/phase3_terrace.glb", json: "models/phase3_terrace.json", centre: [1.2, 0, 1.06], ground: -0.25 },
 };
 const PHASE = new URLSearchParams(location.search).get("phase") === "3" ? 3 : 2;
 const CFG = PHASES[PHASE];
+// Phase 2: the roof footprint (plan cells [x0, y0, x1, y1] in m) sizes the centre, apron and table scale.
+const CELLS = PHASE === 2 ? await fetch(CFG.json).then((r) => r.json()).then((j) => j.cells).catch(() => [[0, 0, 12, 8]]) : null;
+const SPAN = CELLS ? [Math.max(...CELLS.map((c) => c[2])), Math.max(...CELLS.map((c) => c[3]))] : null;
+if (CELLS) CFG.centre = [SPAN[0] / 2, 0.15, -SPAN[1] / 2];      // plan y runs to world -z
 $("p" + PHASE).classList.add("on");
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -182,12 +186,19 @@ function buildBody(cells) {
   add(new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.4, 0.08), M.door), 6, GROUND_Y + 1.2, 0.04);
   add(new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.12, 1.2), M.stucco), 6, GROUND_Y + 2.7, 0.6);   // porch canopy
 }
-if (PHASE === 2) fetch(CFG.json).then((r) => r.json()).then((j) => j.cells)
-  .catch(() => [[0, 0, 12, 8]]).then(buildBody);
-const ground = add(new THREE.Mesh(new THREE.PlaneGeometry(900, 900), M.grass), 6, GROUND_Y, -4);
+if (CELLS) buildBody(CELLS);
+const [CX, , CZ] = CFG.centre;
+const ground = add(new THREE.Mesh(new THREE.PlaneGeometry(900, 900), M.grass), CX, GROUND_Y, CZ);
 ground.rotation.x = -Math.PI / 2; ground.castShadow = false;
-const apron = add(new THREE.Mesh(new THREE.PlaneGeometry(22, 18), M.paving), 6, GROUND_Y + 0.02, -4);
+const apron = add(new THREE.Mesh(new THREE.PlaneGeometry((SPAN ? SPAN[0] : 12) + 10, (SPAN ? SPAN[1] : 8) + 10), M.paving), CX, GROUND_Y + 0.02, CZ);
 apron.rotation.x = -Math.PI / 2; apron.castShadow = false;
+// The trees and neighbours were placed round a 12 x 8 m roof: push those beyond it out by the extra size.
+const GROW = SPAN ? [Math.max(0, SPAN[0] - 12), Math.max(0, SPAN[1] - 8)] : [0, 0];
+function outside(x, ...rest) {
+  const z = rest[rest.length - 1];
+  const nx = x > 12 ? x + GROW[0] : x, nz = z < -8 ? z - GROW[1] : z;
+  return [nx, ...rest.slice(0, -1), nz];
+}
 function tree(x, z, h) {
   const t = new THREE.Group();
   const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.15 * h / 6, 0.25 * h / 6, h * 0.45, 8), M.bark);
@@ -201,9 +212,9 @@ function tree(x, z, h) {
   t.position.set(x, GROUND_Y, z); surround.add(t);
 }
 [[-4, 4, 7], [-6, -10, 8], [17, 5, 6.5], [19, -9, 8], [3, 10, 7], [12, -16, 9], [-12, -2, 6], [24, -2, 7.5]]
-  .forEach(([x, z, h]) => tree(x, z, h));
+  .forEach(([x, z, h]) => tree(...outside(x, z), h));
 [[-22, -4, 10, 8, 14], [34, -6, 12, 10, 9], [6, -34, 16, 9, 12], [6, 30, 14, 9, 7]]
-  .forEach(([x, z, w, d, h]) => add(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), M.stucco), x, GROUND_Y + h / 2, z));
+  .forEach(([x, z, w, d, h]) => add(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), M.stucco), ...outside(x, GROUND_Y + h / 2, z)));
 
 // Phase 3: the scan already holds the walls around the terrace, so only a paved floor under it.
 if (PHASE === 3) {
@@ -348,7 +359,7 @@ $("bVR").onclick = startVR;
 
 // AR (WebXR immersive-ar with hit-test): put the design on a real surface, as a table-size model or at
 // full size (stand on the real roof, or any open floor, and walk among the panels). Tap to place, Move to re-place.
-const AR_TABLE = PHASE === 2 ? 0.04 : 0.03;           // Phase 2 12 m -> 48 cm, Phase 3 16.7 m -> 50 cm
+const AR_TABLE = PHASE === 2 ? 0.5 / Math.max(...SPAN) : 0.03;   // about 50 cm on the long side (Phase 3: 16.7 m -> 50 cm)
 const ar = { scale: AR_TABLE, at: null, placed: false, session: null };
 // The roof centre (at roof level 0) lands on the tapped point p; everything shrinks by `scale`.
 function placeAt(p, scale) {
@@ -433,7 +444,7 @@ addEventListener("resize", () => {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight); stereo.setSize(innerWidth, innerHeight);
 });
-window.__vr = { heightColour, camera, orbit, scene, world, PHASE, CFG, CENTRE, STAND, AR_TABLE, placeAt, arState, toggleArSize, showScan,
+window.__vr = { heightColour, camera, orbit, scene, world, surround, PHASE, CFG, CENTRE, STAND, AR_TABLE, placeAt, arState, toggleArSize, showScan,
   scanCount: () => (scanPts ? scanPts.geometry.attributes.position.count : 0), startVR, stopVR, mode: () => mode };
 </script>
 </body>

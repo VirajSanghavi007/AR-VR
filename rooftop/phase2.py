@@ -26,7 +26,8 @@ TANK_SIDES = 32
 @dataclass(frozen=True)
 class Feature:
     """A rooftop structure, metres in the plan. kind: stair (headroom + door),
-    store (storage room + door) or tank (water tank on a plinth, w = diameter)."""
+    store (storage room + door) or tank (water tank on a plinth, w = diameter, h = top of
+    the tank, stand = plinth height)."""
     name: str
     kind: str
     x: float          # min corner
@@ -34,6 +35,7 @@ class Feature:
     w: float
     d: float
     h: float
+    stand: float = 0.4
 
     @property
     def footprint(self):
@@ -135,14 +137,16 @@ def usable_area(spec, setback=0.5, obstacles=None):
     return area
 
 
-def design(spec, setback=0.5, tilt_deg=15.0, latitude=19.0, facing_deg=90.0, standoff=0.05, features=()):
+def design(spec, setback=0.5, tilt_deg=15.0, latitude=19.0, facing_deg=90.0, standoff=0.05, features=(),
+           walkway=0.0):
     """Return (layout, panel corners as (4,3) metre arrays). facing_deg: direction in the
-    roof's x/y plan the panels face (90 = +y); set it to the equator side on site."""
+    roof's x/y plan the panels face (90 = +y); set it to the equator side on site. walkway: least
+    clear space (m) between rows."""
     area = usable_area(spec, setback, keepout(features, facing_deg, latitude))
     kw = {}
     if tilt_deg > 0:
         kw = dict(facing_deg=facing_deg, sun_alt_deg=L.winter_sun_altitude(latitude))
-    lay = L.layout_panels(area, tilt_deg=tilt_deg, **kw)
+    lay = L.layout_panels(area, tilt_deg=tilt_deg, min_row_gap=walkway, **kw)
     facing = lay.facing if tilt_deg > 0 else None
     corners = panel_corners_3d(roof_frame(spec), lay.panels, standoff, facing, lay.rise)
     return lay, corners
@@ -173,9 +177,9 @@ def _cylinder_mesh(cx, cy, z, r, h, n=TANK_SIDES):
 def feature_parts(f, z0):
     """(verts, tris, uv, material) parts for one rooftop structure standing on z0."""
     if f.kind == "tank":
-        plinth = _box_m(f.x, f.y, z0, f.w, f.d, 0.4) + (None, "roof")
+        plinth = _box_m(f.x, f.y, z0, f.w, f.d, f.stand) + (None, "roof")
         r = f.w / 2 * 0.92
-        body = _cylinder_mesh(f.x + f.w / 2, f.y + f.d / 2, z0 + 0.4, r, f.h - 0.4)
+        body = _cylinder_mesh(f.x + f.w / 2, f.y + f.d / 2, z0 + f.stand, r, f.h - f.stand)
         lid = _cylinder_mesh(f.x + f.w / 2, f.y + f.d / 2, z0 + f.h, r * 0.35, 0.12)
         return [plinth, body + (None, "tank"), lid + (None, "tank")]
     parts = [_box_m(f.x, f.y, z0, f.w, f.d, f.h) + (None, "roof"),
@@ -217,7 +221,8 @@ def write_layout_json(path, spec, features=()):
     """Footprint cells and structures for the viewer (metres, plan x/y, z up)."""
     data = {"slab": spec.slab_thickness / 1000, "parapet": spec.parapet_height / 1000,
             "cells": [list(c) for c in rect_cells(outline(spec))],
-            "features": [{"name": f.name, "kind": f.kind, "x": f.x, "y": f.y, "w": f.w, "d": f.d, "h": f.h}
+            "features": [{"name": f.name, "kind": f.kind, "x": f.x, "y": f.y, "w": f.w, "d": f.d, "h": f.h,
+                          "stand": f.stand}
                          for f in features]}
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -235,10 +240,10 @@ def export_step(path, spec, panel_corners, thickness=0.035, features=()):
     z0 = spec.slab_thickness
     for f in features:
         if f.kind == "tank":
-            asm.add(cq.Workplane("XY").box(f.w * 1000, f.d * 1000, 400, centered=False)
+            asm.add(cq.Workplane("XY").box(f.w * 1000, f.d * 1000, f.stand * 1000, centered=False)
                     .translate((f.x * 1000, f.y * 1000, z0)), name=f.name + "_Plinth")
-            asm.add(cq.Workplane("XY").workplane(offset=z0 + 400).center((f.x + f.w / 2) * 1000, (f.y + f.d / 2) * 1000)
-                    .circle(f.w / 2 * 920).extrude(f.h * 1000 - 400), name=f.name,
+            asm.add(cq.Workplane("XY").workplane(offset=z0 + f.stand * 1000).center((f.x + f.w / 2) * 1000, (f.y + f.d / 2) * 1000)
+                    .circle(f.w / 2 * 920).extrude((f.h - f.stand) * 1000), name=f.name,
                     color=cq.Color(0.07, 0.18, 0.42))
         else:
             asm.add(cq.Workplane("XY").box(f.w * 1000, f.d * 1000, f.h * 1000, centered=False)

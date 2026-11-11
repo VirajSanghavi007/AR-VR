@@ -237,3 +237,71 @@ def test_cli_publish_copies_model_into_preview(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "ROOT", tmp_path)
     mod.main([str(root / "data/rooftop_01/measurements.json"), "--out", str(tmp_path / "o"), "--publish"])
     assert {p.name for p in (tmp_path / "preview" / "models").iterdir()} == {"rooftop_solar.glb", "rooftop_solar.json"}
+
+
+def test_design_walkway_sets_the_row_gap():
+    spec = RooftopSpec(12000, 10000)
+    lay0, _ = phase2.design(spec, latitude=19.0, facing_deg=270.0)
+    lay1, c1 = phase2.design(spec, latitude=19.0, facing_deg=270.0, walkway=1.2)
+    assert lay0.row_gap < 1.2 and lay1.row_gap == pytest.approx(1.2) and lay1.count < lay0.count
+    assert len(c1) == lay1.count
+
+
+def _cli(name):
+    import importlib.util
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(name, root / "scripts" / "phase2_solar.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod, root
+
+
+def test_cli_detailed_writes_step_glb_json_and_publishes(tmp_path, monkeypatch):
+    mod, root = _cli("phase2_solar_det")
+    (tmp_path / "preview" / "models").mkdir(parents=True)
+    dxf = str(root / "data/sample_roof/roof.dxf")
+    monkeypatch.setattr(mod, "ROOT", tmp_path)
+    mod.main(["--dxf", dxf, "--detailed", "--out", str(tmp_path / "o"), "--publish", "--walkway", "0.8"])
+    assert {p.name for p in (tmp_path / "o").iterdir()} >= {"rooftop_detailed.step", "rooftop_detailed.glb",
+                                                           "rooftop_detailed.json"}
+    assert {p.name for p in (tmp_path / "preview" / "models").iterdir()} == {
+        "rooftop_solar.glb", "rooftop_solar.json", "rooftop_detailed.glb", "rooftop_detailed.json"}
+    j = json.loads((tmp_path / "o" / "rooftop_detailed.json").read_text())
+    assert j["detailed"] and j["row_gap"] == pytest.approx(0.8) and j["floors"] == 3 and j["latitude"] == 19.07
+    assert j["facing_deg"] == 270.0 and j["panels"] > 20
+
+
+def test_cli_detailed_needs_a_drawing(tmp_path):
+    mod, root = _cli("phase2_solar_det2")
+    with pytest.raises(SystemExit):
+        mod.main([str(root / "data/rooftop_01/measurements.json"), "--out", str(tmp_path), "--detailed"])
+
+
+def test_cli_detailed_textures_by_default_and_plain_on_request(tmp_path, monkeypatch):
+    mod, root = _cli("phase2_solar_tex")
+    dxf = str(root / "data/sample_roof/roof.dxf")
+    calls = []
+    import rooftop.textures as T
+    real = T.texture_set
+    monkeypatch.setattr(T, "texture_set", lambda c, **k: calls.append(k) or real(c, **k))
+
+    def mats(path):
+        b = path.read_bytes()
+        n = struct.unpack("<I", b[12:16])[0]
+        return {m["name"]: m for m in json.loads(b[20:20 + n])["materials"]}
+
+    mod.main(["--dxf", dxf, "--detailed", "--out", str(tmp_path / "t"), "--texture-px", "64"])
+    assert calls == [{"px": 64}]
+    m = mats(tmp_path / "t" / "rooftop_detailed.glb")
+    assert "normalTexture" in m["concrete"] and "baseColorTexture" in m["concrete"]["pbrMetallicRoughness"]
+    big = tmp_path / "t" / "rooftop_detailed.glb"
+    mod.main(["--dxf", dxf, "--detailed", "--out", str(tmp_path / "p"), "--plain"])
+    assert len(calls) == 1
+    m = mats(tmp_path / "p" / "rooftop_detailed.glb")
+    assert "normalTexture" not in m["concrete"] and "baseColorTexture" not in m["concrete"]["pbrMetallicRoughness"]
+    assert (tmp_path / "p" / "rooftop_detailed.glb").stat().st_size < big.stat().st_size
+    assert mod.main.__module__ and "--texture-px" in open(root / "scripts" / "phase2_solar.py").read()
+    calls.clear()
+    mod.main(["--dxf", dxf, "--detailed", "--out", str(tmp_path / "d")])
+    assert calls == [{"px": 256}]

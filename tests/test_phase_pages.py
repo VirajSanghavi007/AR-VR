@@ -61,3 +61,8 @@ def test_every_local_link_on_the_phase_pages_exists():
             if ref.startswith("//"):
                 continue
             assert (PREVIEW / ref).is_file(), f"{name}: {ref}"
+
+
+def test_phase2_links_the_customer_roof_viewer():
+    assert ("btn ghost", "roof.html", "Customer roof viewer (sun, shadows, AR)") in buttons(read("phase2.html"))
+    assert 'href="roof.html"' in read("index.html").split("Straight to the tools:", 1)[1]

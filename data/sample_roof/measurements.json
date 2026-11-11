@@ -1,0 +1,163 @@
+{
+ "_note": "True values of data/sample_roof/roof.dxf (mm, origin at the roof outline's south-west corner). Written by scripts/make_sample_dxf.py from rooftop/sample_dxf.py.",
+ "length": 18000,
+ "width": 12000,
+ "diagonal": 21633.3,
+ "notch_length": 6000,
+ "notch_width": 4000,
+ "parapet_thickness": 230,
+ "parapet_height": 1000,
+ "rooms": [
+  {
+   "name": "Stair1",
+   "kind": "stair",
+   "x": 800,
+   "y": 8400,
+   "w": 3000,
+   "d": 3200,
+   "h": 2700,
+   "door": [
+    1800,
+    8400,
+    2800,
+    8400
+   ]
+  },
+  {
+   "name": "Store1",
+   "kind": "store",
+   "x": 4400,
+   "y": 9600,
+   "w": 2400,
+   "d": 2000,
+   "h": 2700,
+   "door": [
+    5100,
+    9600,
+    6000,
+    9600
+   ]
+  }
+ ],
+ "tanks": [
+  {
+   "name": "Tank1",
+   "cx": 14000,
+   "cy": 6800,
+   "r": 600,
+   "h": 1500,
+   "s": 600
+  },
+  {
+   "name": "Tank2",
+   "cx": 16000,
+   "cy": 6800,
+   "r": 600,
+   "h": 1500,
+   "s": 600
+  }
+ ],
+ "drains": [
+  [
+   600,
+   600
+  ],
+  [
+   17400,
+   600
+  ],
+  [
+   600,
+   11400
+  ]
+ ],
+ "pipes": [
+  {
+   "points": [
+    [
+     14000,
+     6200
+    ],
+    [
+     14000,
+     3000
+    ],
+    [
+     12500,
+     3000
+    ]
+   ],
+   "d": 50
+  }
+ ],
+ "north_deg": 90.0,
+ "site": {
+  "lat": 19.07,
+  "lon": 72.88,
+  "tz": 5.5,
+  "floors": 3,
+  "floor_h": 3200
+ },
+ "dimensions": [
+  {
+   "name": "length",
+   "p1": [
+    0,
+    0
+   ],
+   "p2": [
+    18000,
+    0
+   ],
+   "value": 18000
+  },
+  {
+   "name": "width",
+   "p1": [
+    0,
+    0
+   ],
+   "p2": [
+    0,
+    12000
+   ],
+   "value": 12000
+  },
+  {
+   "name": "notch_length",
+   "p1": [
+    12000,
+    12000
+   ],
+   "p2": [
+    18000,
+    12000
+   ],
+   "value": 6000
+  },
+  {
+   "name": "notch_width",
+   "p1": [
+    18000,
+    8000
+   ],
+   "p2": [
+    18000,
+    12000
+   ],
+   "value": 4000
+  },
+  {
+   "name": "stair_width",
+   "p1": [
+    800,
+    8400
+   ],
+   "p2": [
+    3800,
+    8400
+   ],
+   "value": 3000
+  }
+ ]
+}

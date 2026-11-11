@@ -92,3 +92,17 @@ def test_layout_stays_inside_irregular_area_with_hole():
 
 def test_layout_empty_area():
     assert L.layout_panels(Polygon(), angle=0).count == 0
+
+
+def test_min_row_gap_widens_tilted_rows_to_a_walkway():
+    area = box(0, 0, 12, 12)
+    kw = dict(tilt_deg=15, facing_deg=270.0, sun_alt_deg=L.winter_sun_altitude(19.0))
+    plain = L.layout_panels(area, **kw)
+    walk = L.layout_panels(area, min_row_gap=1.5, **kw)
+    assert plain.row_gap < 1.5 and walk.row_gap == pytest.approx(1.5)
+    assert walk.count < plain.count
+    ys = sorted({round(p.bounds[1], 3) for p in walk.panels})
+    depth = walk.panels[0].bounds[3] - walk.panels[0].bounds[1]
+    assert min(b - a for a, b in zip(ys, ys[1:])) == pytest.approx(depth + 0.02 + 1.5, abs=2e-3)
+    small = L.layout_panels(area, min_row_gap=0.01, **kw)
+    assert small.row_gap == pytest.approx(plain.row_gap) and small.count == plain.count
