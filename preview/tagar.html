@@ -219,7 +219,7 @@ label.f input[type=file] { font: .85rem var(--sans); padding: 6px; }
 import * as THREE from "three";
 import { PhoneEmulator, rng } from "./phoneemu.js?v=2";
 import { pixelRay, rayPlane, fitRectangle, fitFromTwo, fitFromThree, tagAxis, alignAxes, rectMoved, tagEdge, fitScale, bestTurns,
-         scaleLabel, nextNiceScale, isStable, downsample, chooseTags, mostSeen, averageTwo, tagsMoved, onWall, tagCorners3D, surfacePlane, plumbAxes } from "./tagrect.js?v=7";
+         scaleLabel, nextNiceScale, isStable, downsample, detectScales, chooseTags, mostSeen, averageTwo, tagsMoved, onWall, tagCorners3D, surfacePlane, plumbAxes } from "./tagrect.js?v=8";
 import { PANEL_LOOKS, lookByKey, nextLook, cellLayout, panelHit, twistDelta, isLongPress, clampToBox,
          yawDeg, heightMap, borderPx, moveBox, gridLayout, clampCount, arrayBounds, relayout,
          energy, mountParts, turnArray, cellShade, chamferCell, smoothLight,
@@ -669,12 +669,11 @@ function readCamera(frame, view) {
 function detectRect(frame, view) {
   const cam = readCamera(frame, view);
   if (!cam) return "No camera frame from the browser";
-  const img = downsample(pixels, cam.w, cam.h, flipY);
-  const found = detector.detect(img);
+  const found = detectScales((img) => detector.detect(img), pixels, cam.w, cam.h, flipY);
   // a mirrored tag never decodes, so the row order that decodes is the upright one
   if (!found.length) { if (!flipKnown) flipY = !flipY; return "Aim at the tags so all of them are in view"; }
   flipKnown = true;
-  const pick = chooseTags(mergeNested(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) }))));
+  const pick = chooseTags(mergeNested(found));
   if (!pick.ok) return pick.why + (pick.found === 1 ? ": step back so the others fit too" : "");
   const key = pick.tags.map((t) => t.id).join(","), count = pick.tags.length, now = performance.now();
   if (rect) {

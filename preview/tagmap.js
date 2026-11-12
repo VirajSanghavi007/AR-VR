@@ -5,7 +5,7 @@
 // Room frame: y is up (ARCore's world is levelled by gravity, so only a turn about y and a shift are ever
 // fitted), the origin is the centre of the tags the setup started on, and on a wall z points out of that
 // wall into the room with x to the right as you face it. Started on the floor: z = the tags' printed "down".
-import { invert4, transform, cross, dot, unit, norm } from "./tagrect.js?v=7";
+import { invert4, transform, cross, dot, unit, norm } from "./tagrect.js?v=8";
 
 export const MAP_VERSION = 1;
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];

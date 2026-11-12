@@ -178,6 +178,85 @@ def test_downsample_averages_blocks_and_flips(node_available):
     # 3 pixels over a budget of 2: the step rounds up to 2, never down to 1 (which would blow the budget)
     assert run("(() => { const d = R.downsample(new Uint8Array(12), 3, 1, false, 2); return [d.factor, d.width]; })()") == [2, 1]
 
+    # an explicit step overrides the pixel budget
+    assert run("(() => { const d = R.downsample(new Uint8Array(4 * 2 * 4), 4, 2, false, 1e9, 2); return [d.factor, d.width, d.height]; })()") == [2, 2, 1]
+
+
+# a stand-in detector: records each image it is given and answers from a script keyed by image width
+FAKE = ("(() => {{ const calls = [], seen = {script};"
+        " const detect = (img) => {{ calls.push([img.width, img.height, img.factor]); return (seen[img.width] || []).map((m) => ({{"
+        " id: m.id, corners: m.c.map(([x, y]) => ({{ x, y }})) }})); }};"
+        " const out = R.detectScales(detect, new Uint8Array({w} * {h} * 4), {w}, {h}, false{extra});"
+        " return {{ calls, out }}; }})()")
+
+
+def sqc(x, y, s):
+    return [[x, y], [x + s, y], [x + s, y + s], [x, y + s]]
+
+
+def fake(script, w=800, h=400, extra=""):
+    return run(FAKE.format(script=json.dumps(script), w=w, h=h, extra=extra))
+
+
+def test_detect_scales_runs_every_level_and_maps_corners_back(node_available):
+    r = fake({"400": [{"id": 3, "c": sqc(10, 20, 50)}]})
+    # the frame, then 2, 4 and 8 times smaller, each image the right size
+    assert r["calls"] == [[800, 400, 1], [400, 200, 2], [200, 100, 4], [100, 50, 8]]
+    assert r["out"] == [{"id": 3, "corners": sqc(20, 40, 100), "step": 2}]
+
+
+def test_detect_scales_keeps_the_finest_read_of_each_tag(node_available):
+    # tag 1 read at full size and again (a pixel off) at half size: the full-size corners win;
+    # tag 2 only at a quarter; tag 3 only on the frame
+    r = fake({"800": [{"id": 1, "c": sqc(100, 100, 80)}, {"id": 3, "c": sqc(600, 300, 40)}],
+              "400": [{"id": 1, "c": sqc(50.5, 50, 40)}],
+              "200": [{"id": 2, "c": sqc(20, 20, 30)}, {"id": 1, "c": sqc(25, 25, 20)}]})
+    assert r["out"] == [{"id": 1, "corners": sqc(100, 100, 80), "step": 1}, {"id": 3, "corners": sqc(600, 300, 40), "step": 1},
+                        {"id": 2, "corners": sqc(80, 80, 120), "step": 4}]
+
+
+def test_detect_scales_keeps_one_id_printed_twice_apart(node_available):
+    # the same id in two far-apart places is two printed tags, not one read twice: both stay
+    # (chooseTags then refuses the pair), whichever level each came from
+    r = fake({"800": [{"id": 5, "c": sqc(0, 0, 40)}], "400": [{"id": 5, "c": sqc(300, 150, 20)}]})
+    assert [(m["id"], m["step"]) for m in r["out"]] == [(5, 1), (5, 2)]
+    # just over one tag apart is still apart; just under is the same tag
+    near = fake({"800": [{"id": 5, "c": sqc(0, 0, 40)}], "400": [{"id": 5, "c": sqc(19, 0, 20)}]})
+    far = fake({"800": [{"id": 5, "c": sqc(0, 0, 40)}], "400": [{"id": 5, "c": sqc(21, 0, 20)}]})
+    assert len(near["out"]) == 1 and len(far["out"]) == 2
+    # one tag read at half size with its corners listed from the opposite corner is still one tag
+    turned = [[40, 40], [0, 40], [0, 0], [40, 0]]
+    assert len(fake({"800": [{"id": 5, "c": sqc(0, 0, 80)}], "400": [{"id": 5, "c": turned}]})["out"]) == 1
+
+
+def test_detect_scales_starts_from_the_pixel_budget_and_stops_at_tiny_images(node_available):
+    # a budget of a quarter of the frame starts at step 2; the step-8 copy would be 50 x 25 px: skipped
+    r = fake({}, w=400, h=200, extra=", 400 * 200 / 4")
+    assert r["calls"] == [[200, 100, 2], [100, 50, 4]]
+    # corners come back by the real step (base x level), on both axes
+    r = fake({"100": [{"id": 4, "c": sqc(10, 5, 8)}]}, w=400, h=200, extra=", 400 * 200 / 4")
+    assert r["out"] == [{"id": 4, "corners": sqc(40, 20, 32), "step": 4}]
+    r = fake({}, w=256, h=256)
+    assert [c[2] for c in r["calls"]] == [1, 2, 4, 8]          # 32 px is still read
+    r = fake({}, w=248, h=256)
+    assert [c[2] for c in r["calls"]] == [1, 2, 4]             # 31 px wide is not
+    assert fake({}, w=800, h=400, extra=", 2.6e6, [1, 3]")["calls"] == [[800, 400, 1], [266, 133, 3]]
+
+
+def test_pages_detect_at_every_scale():
+    # both AR pages read tags through detectScales, not one downsampled frame, and every importer of
+    # tagrect.js asks for the same version (two versions would load two copies of the module)
+    site, tagar = (PREVIEW / "site.html").read_text(encoding="utf-8"), (PREVIEW / "tagar.html").read_text(encoding="utf-8")
+    for html, fn in ((site, "function readTags("), (tagar, "function detectRect(")):
+        body = html[html.index(fn):html.index("\n}", html.index(fn))]
+        assert "detectScales((img) => detector.detect(img), pixels, cam.w, cam.h, flipY)" in body
+        assert "downsample(" not in body and "img.factor" not in body
+    versions = set()
+    for f in PREVIEW.glob("*.*"):
+        if f.suffix in (".html", ".js"):
+            versions |= set(re.findall(r"tagrect\.js\?v=(\d+)", f.read_text(encoding="utf-8")))
+    assert versions == {"8"}
+
 
 def sq(i, x=0, size=1):
     return f"{{id: {i}, corners: [[{x},0],[{x + size},0],[{x + size},{size}],[{x},{size}]]}}"
@@ -368,9 +447,9 @@ const fs = require("fs");
 const job = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const raw = fs.readFileSync(process.argv[3]);
 import(require("url").pathToFileURL(process.argv[1] + "/tagrect.js").href).then((R) => {
-  const img = R.downsample(new Uint8Array(raw.buffer, raw.byteOffset, raw.length), job.w, job.h, true, job.maxPixels);
-  const found = new AR.Detector({ dictionaryName: "APRILTAG_36h11" }).detect(img);
-  const pick = R.chooseTags(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) })));
+  const det = new AR.Detector({ dictionaryName: "APRILTAG_36h11" });
+  const found = R.detectScales((img) => det.detect(img), new Uint8Array(raw.buffer, raw.byteOffset, raw.length), job.w, job.h, true, job.maxPixels);
+  const pick = R.chooseTags(found);
   if (!pick.ok) { console.log(JSON.stringify(pick)); return; }
   const n = [job.hit[4], job.hit[5], job.hit[6]], p0 = [job.hit[12], job.hit[13], job.hit[14]];
   const centres = [], edges = [], axes = [];
@@ -382,7 +461,7 @@ import(require("url").pathToFileURL(process.argv[1] + "/tagrect.js").href).then(
   }
   const k = centres.length;
   const rect = k === 2 ? R.fitFromTwo(centres, axes, n, job.toward) : k === 3 ? R.fitFromThree(centres, n) : R.fitRectangle(centres, n);
-  console.log(JSON.stringify({ ok: true, ids: pick.tags.map((t) => t.id), factor: img.factor, rect, edges }));
+  console.log(JSON.stringify({ ok: true, ids: pick.tags.map((t) => t.id), steps: pick.tags.map((t) => t.step), rect, edges }));
 });
 """
 
@@ -425,9 +504,9 @@ const fs = require("fs");
 const job = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const raw = fs.readFileSync(process.argv[3]);
 import(require("url").pathToFileURL(process.argv[1] + "/tagrect.js").href).then((R) => {
-  const img = R.downsample(new Uint8Array(raw.buffer, raw.byteOffset, raw.length), job.w, job.h, true, job.maxPixels);
-  const found = new AR.Detector({ dictionaryName: "APRILTAG_36h11" }).detect(img);
-  const pick = R.chooseTags(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) })));
+  const det = new AR.Detector({ dictionaryName: "APRILTAG_36h11" });
+  const found = R.detectScales((img) => det.detect(img), new Uint8Array(raw.buffer, raw.byteOffset, raw.length), job.w, job.h, true, job.maxPixels);
+  const pick = R.chooseTags(found);
   if (!pick.ok) { console.log(JSON.stringify(pick)); return; }
   const worlds = pick.tags.map((t) => R.tagCorners3D(t.corners, 0.16, job.w, job.h, job.proj, job.pose));
   const { n, p0, fromHit } = R.surfacePlane(worlds, job.hit, job.pose.slice(12, 15));
@@ -472,12 +551,55 @@ def test_wall_photo_locks_from_the_tags_alone(tmp_path, node_available):
 def test_table_photo_gives_the_true_rectangle(tmp_path, node_available):
     table_photo(tmp_path)
     r = chain(tmp_path)
-    assert r["ok"] and r["factor"] == 1                     # 1.2 MP frame: kept whole
+    assert r["ok"] and r["steps"] == [1, 1, 1, 1]           # 1.2 MP sharp frame: read whole
     assert r["rect"]["width"] == pytest.approx(0.8, abs=0.01)
     assert r["rect"]["height"] == pytest.approx(0.5, abs=0.01)
     assert np.allclose(r["rect"]["center"], [0, 0, 0], atol=0.01)
     assert r["rect"]["angleErrDeg"] < 2
     assert np.allclose(r["edges"], 0.16, atol=0.008)        # tag size check agrees with the print
+
+
+CLOSE = """
+require(process.argv[1] + "/vendor/js-aruco2/cv.js");
+const AR = require(process.argv[1] + "/tag36h11.js");
+const fs = require("fs");
+const raw = fs.readFileSync(process.argv[2]), [w, h] = [+process.argv[3], +process.argv[4]];
+import(require("url").pathToFileURL(process.argv[1] + "/tagrect.js").href).then((R) => {
+  const det = new AR.Detector({ dictionaryName: "APRILTAG_36h11" }), px = new Uint8Array(raw.buffer, raw.byteOffset, raw.length);
+  const whole = det.detect(R.downsample(px, w, h, true)).map((m) => m.id);
+  console.log(JSON.stringify({ whole, scales: R.detectScales((img) => det.detect(img), px, w, h, true) }));
+});
+"""
+
+
+@pytest.mark.parametrize("edge,blur", [(160, 2.0), (480, 2.5), (480, 4.0), (560, 6.0)])
+def test_soft_close_up_tag_is_found_at_a_smaller_scale(tmp_path, node_available, edge, blur):
+    # a phone-sized portrait frame (860 x 1920, as the phone in the field gave) with one tag close up and
+    # as soft as a hand-held phone camera makes it: the full-size frame finds nothing, the scales do
+    w, h = 860, 1920
+    t = T.tag_image(2, cell_px=40)
+    s, full = t.shape[0], edge * 10 / 8
+    x0, y0 = (w - full) / 2, 700
+    true = np.float32([[x0 + full / 10, y0 + full / 10], [x0 + full * 0.9, y0 + full / 10],
+                       [x0 + full * 0.9, y0 + full * 0.9], [x0 + full / 10, y0 + full * 0.9]])
+    M = cv2.getPerspectiveTransform(np.float32([[0, 0], [s, 0], [s, s], [0, s]]),
+                                    np.float32([[x0, y0], [x0 + full, y0], [x0 + full, y0 + full], [x0, y0 + full]]))
+    img = np.full((h, w), 160, np.float32)
+    mask = cv2.warpPerspective(np.ones((s, s), np.float32), M, (w, h)) > 0.5
+    img[mask] = cv2.warpPerspective(t.astype(np.float32), M, (w, h))[mask] * 0.75 + 30
+    img = cv2.GaussianBlur(img, (0, 0), blur) + np.random.default_rng(0).normal(0, 3, img.shape)
+    g = np.clip(img, 0, 255).astype(np.uint8)
+    (tmp_path / "f.bin").write_bytes(cv2.cvtColor(g[::-1], cv2.COLOR_GRAY2RGBA).tobytes())   # rows bottom-up
+    out = subprocess.run(["node", "-e", CLOSE, str(PREVIEW), str(tmp_path / "f.bin"), str(w), str(h)], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    r = json.loads(out.stdout)
+    assert r["whole"] == []
+    assert [m["id"] for m in r["scales"]] == [2] and r["scales"][0]["step"] > 1
+    got = np.array(r["scales"][0]["corners"])
+    # corners back in camera pixels, within a step plus 2 % of the edge (3 mm on a 160 mm tag) of the truth;
+    # the detector's corner order may start anywhere
+    err = min(np.abs(np.roll(got, k, axis=0) - true).max() for k in range(4))
+    assert err < r["scales"][0]["step"] + 0.02 * edge
 
 
 def test_table_photo_with_any_ids_and_three_tags(tmp_path, node_available):

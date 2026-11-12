@@ -99,7 +99,7 @@ def test_pages_merge_nested_detections():
     assert "return mergeNested(toMarkers(detector.detect(img), 1 / k));" in tags
     tagar = (PREVIEW / "tagar.html").read_text(encoding="utf-8")
     assert 'import { mergeNested } from "./tagcheck.js?v=2";' in tagar
-    assert "chooseTags(mergeNested(found.map(" in tagar
+    assert "chooseTags(mergeNested(found));" in tagar
 
 
 def photo(name, *ids, edge=100):

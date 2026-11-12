@@ -166,7 +166,7 @@ import * as THREE from "three";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
 import { PhoneEmulator, rng } from "./phoneemu.js?v=3";
-import { pixelRay, rayPlane, downsample, tagCorners3D, invert4, transform } from "./tagrect.js?v=7";
+import { pixelRay, rayPlane, detectScales, tagCorners3D, invert4, transform } from "./tagrect.js?v=8";
 import { mergeNested } from "./tagcheck.js?v=2";
 import { composite } from "./snap.js?v=2";
 import { grainFor, cameraLookShader, smoothLight, lightProbeOptions, twistDelta } from "./panel.js?v=9";
@@ -766,11 +766,11 @@ function alignTap(cx, cy) {
 function readTags(frame, view) {
   const cam = readCamera(frame, view);
   if (!cam) return "No camera frame from the browser";
-  const img = downsample(pixels, cam.w, cam.h, flipY), found = detector.detect(img);
+  const found = detectScales((img) => detector.detect(img), pixels, cam.w, cam.h, flipY);
   if (!found.length) { if (!flipKnown) flipY = !flipY; return null; }
   flipKnown = true;
   const proj = Array.from(view.projectionMatrix), pose = Array.from(view.transform.matrix), out = {};
-  for (const m of mergeNested(found.map((m) => ({ id: m.id, corners: m.corners.map((c) => [c.x * img.factor, c.y * img.factor]) })))) {
+  for (const m of mergeNested(found)) {
     const c = m.corners, edge = Math.hypot(c[1][0] - c[0][0], c[1][1] - c[0][1]);
     if (edge < 18) continue;                                  // too small to give a steady pose
     try { out[m.id] = tagCorners3D(c, tagSize, cam.w, cam.h, proj, pose); } catch (e) { /* skewed read */ }

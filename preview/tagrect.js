@@ -132,8 +132,8 @@ export function isStable(history, need = 3, tol = 0.01) {
 // whole step to at most maxPixels (the default keeps most phone frames whole: at half size the
 // thin white margin round a distant tag merges with its black square and it stops decoding), each output pixel the mean of its step x step block (plain
 // skipping aliases thin tag borders away). Returns the factor to map detector pixels back.
-export function downsample(rgba, width, height, flipY, maxPixels = 2.6e6) {
-  const step = Math.max(1, Math.ceil(Math.sqrt((width * height) / maxPixels)));
+export function downsample(rgba, width, height, flipY, maxPixels = 2.6e6, step = 0) {
+  step = step || Math.max(1, Math.ceil(Math.sqrt((width * height) / maxPixels)));
   const w = Math.floor(width / step), h = Math.floor(height / step), k = step * step;
   const out = new Uint8ClampedArray(w * h * 4);
   for (let y = 0; y < h; y++) {
@@ -151,6 +151,29 @@ export function downsample(rgba, width, height, flipY, maxPixels = 2.6e6) {
     }
   }
   return { data: out, width: w, height: h, factor: step };
+}
+
+// Tags at several scales. js-aruco2's adaptive threshold compares each pixel with its 5 x 5
+// neighbourhood, so an edge softer than that (out of focus, or the phone moving, about 1.5 px of blur
+// is enough) never closes into an outline and the tag is not found. Close up, where every tag is
+// soft on a phone camera, that lost nearly every frame. Shrinking the frame shrinks the blur with it,
+// so run the detector on the frame and on copies 2, 4 and 8 times smaller (about a third more work)
+// and keep each tag from the finest level that read it (its corners are the most exact).
+// detect(img) -> [{id, corners: [{x, y}]}]; returns [{id, corners: [[x, y]] in camera pixels, step}].
+export function detectScales(detect, rgba, width, height, flipY, maxPixels = 2.6e6, levels = [1, 2, 4, 8]) {
+  const base = Math.max(1, Math.ceil(Math.sqrt((width * height) / maxPixels))), out = [];
+  for (const k of levels) {
+    const step = base * k;
+    if (width / step < 32 || height / step < 32) break;      // too small for any tag to decode
+    const img = downsample(rgba, width, height, flipY, maxPixels, step);
+    for (const m of detect(img)) {
+      const corners = m.corners.map((c) => [c.x * step, c.y * step]);
+      const c = corners.reduce((a, p) => [a[0] + p[0] / 4, a[1] + p[1] / 4], [0, 0]);
+      if (!out.some((o) => o.id === m.id && Math.hypot(c[0] - o.c[0], c[1] - o.c[1]) < Math.sqrt(area2(o.corners))))
+        out.push({ id: m.id, corners, step, c });
+    }
+  }
+  return out.map(({ c, ...m }) => m);
 }
 
 // The detector can return one printed tag twice, from the outer and an inner outline of its black
