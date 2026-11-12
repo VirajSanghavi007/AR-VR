@@ -376,3 +376,191 @@ def test_design_round_trip_gives_the_same_parts(node_available):
             return x.keys() == y.keys() and all(close(x[k], y[k]) for k in x)
         return x == y
     assert close(a, b)
+
+
+# ---------- solar arrays ----------
+
+RECT10x5 = [[0, 5], [10, 5], [10, 0], [0, 0]]                     # front edge along z = 5
+PLAN_D = 1.762 * math.cos(math.radians(15))
+PITCH = PLAN_D + 1.762 * math.sin(math.radians(15)) / math.tan(math.radians(25))
+
+
+def test_new_array_puts_the_front_edge_on_plus_z_whichever_way_round(node_available):
+    for pts in (RECT10x5, [[0, 0], [10, 0], [10, 5], [0, 5]], [[10, 5], [10, 0], [0, 0], [0, 5]]):
+        a = run(f"B.newArray({json.dumps(pts)})")
+        assert a["type"] == "array" and a["mat"] == "metal" and a["h"] == 0.01 and a["pv"] == {} and a["y"] == 0
+        assert (a["x"], a["z"]) == (pytest.approx(5), pytest.approx(2.5))
+        back = run(f"(() => {{ const a = B.newArray({json.dumps(pts)}); return a.pts.map(p => B.toRoom(a, p)); }})()")
+        assert back == [pytest.approx(p, abs=1e-9) for p in pts]       # the local corners map back to the taps
+        maxz = max(p[1] for p in a["pts"])
+        assert a["pts"][0][1] == pytest.approx(maxz) and a["pts"][1][1] == pytest.approx(maxz)
+        assert a["base"] == {"w": pytest.approx(a["w"]), "d": pytest.approx(a["d"])}
+    assert [run(f"B.newArray({json.dumps(p)})")["w"] for p in (RECT10x5, [[10, 5], [10, 0], [0, 0], [0, 5]])] == [pytest.approx(10), pytest.approx(5)]
+    assert run("B.newArray([[10, 5], [10, 0], [0, 0], [0, 5]]).d") == pytest.approx(10)
+    assert run("B.newArray([[0,0],[1,0],[1,1]], {tiltDeg: 5}).pv") == {"tiltDeg": 5}
+    assert run("B.newDrawn('array', [[0, 0], [2, 0], [2, 2]]).type") == "array"
+    with pytest.raises(RuntimeError, match="3 or more roof corners"):
+        run("B.newArray([[0, 0], [1, 0]])")
+    with pytest.raises(RuntimeError, match="front edge is too short"):
+        run("B.newArray([[0, 0], [0.04, 0], [1, 1]])")
+    assert run("B.newArray([[0, 0], [0.05, 0], [1, 1]]).type") == "array"
+
+
+def test_segs_cross_and_rect_in_poly(node_available):
+    assert run("B.segsCross([0,0],[2,2],[0,2],[2,0])") is True
+    assert run("B.segsCross([0,0],[1,1],[1,1],[2,0])") is False          # touching at an end is not crossing
+    assert run("B.segsCross([0,0],[1,0],[0,1],[1,1])") is False
+    assert run("B.segsCross([0,0],[2,0],[1,-1],[1,1])") is True
+    assert run("B.segsCross([0,0],[2,0],[1,0.5],[1,1])") is False         # c-d stops short of a-b
+    sq = [[0, 0], [10, 0], [10, 10], [0, 10]]
+    assert run(f"B.rectInPoly(1, 9, 1, 9, {sq})") is True
+    assert run(f"B.rectInPoly(-1, 9, 1, 9, {sq})") is False and run(f"B.rectInPoly(1, 9, 1, 11, {sq})") is False
+    assert run(f"B.rectInPoly(20, 21, 20, 21, {sq})") is False                 # wholly outside, no side crossing
+    left = [[0, 0], [10, 0], [10, 10], [0, 10], [0, 6], [8, 6], [8, 4], [0, 4]]   # a slot cut in from the left
+    assert run(f"B.rectInPoly(7, 9, 1, 9, {left})") is False                  # only the rect's left side is crossed
+    right = [[0, 0], [10, 0], [10, 4], [2, 4], [2, 6], [10, 6], [10, 10], [0, 10]]
+    assert run(f"B.rectInPoly(1, 3, 1, 9, {right})") is False                 # only its right side is crossed
+    u = [[0, 0], [10, 0], [10, 10], [6, 10], [6, 2], [4, 2], [4, 10], [0, 10]]
+    assert run(f"B.rectInPoly(1, 9, 5, 6, {u})") is False               # all 4 corners inside, the slot cuts through
+    assert run(f"B.rectInPoly(1, 3, 5, 6, {u})") is True and run(f"B.rectInPoly(1, 9, 0.5, 1.5, {u})") is True
+
+
+def layout(pts, pv=None):
+    return run(f"B.arrayLayout(B.newArray({json.dumps(pts)}, {json.dumps(pv or {})}))")
+
+
+def test_array_layout_rows_and_columns_on_a_rectangle(node_available):
+    L = layout(RECT10x5)                       # 9 m clear: 7 portrait panels 1.134 m wide, 2 cm apart; 4 m deep: 1 row
+    assert (L["n"], L["rows"]) == (7, 1)
+    assert (L["pw"], L["sl"]) == (1.134, 1.762) and L["tilt"] == pytest.approx(math.radians(15))
+    assert L["planD"] == pytest.approx(PLAN_D) and L["pitch"] == pytest.approx(PITCH)
+    assert L["rowGap"] == pytest.approx(PITCH - PLAN_D)
+    xs = [p[0] for p in L["panels"]]
+    assert xs[0] == pytest.approx(-5 + 0.5 + 0.567) and all(b - a == pytest.approx(1.154) for a, b in zip(xs, xs[1:]))
+    assert all(p[1] == pytest.approx(2.5 - 0.5 - PLAN_D / 2) for p in L["panels"])      # front row hugs the setback
+    assert L["kWp"] == pytest.approx(3.08) and L["kwhDay"] == pytest.approx(3.08 * 5 * 0.8)
+    deep = layout([[0, 8.2], [10, 8.2], [10, 0], [0, 0]])         # 7.2 m clear >= planD + 2 pitch = 7.06 m
+    assert (deep["n"], deep["rows"]) == (21, 3)
+    zs = sorted({round(p[1], 6) for p in deep["panels"]}, reverse=True)
+    assert zs[0] - zs[1] == pytest.approx(PITCH) and zs[1] - zs[2] == pytest.approx(PITCH)
+    assert layout([[0, 8], [10, 8], [10, 0], [0, 0]])["rows"] == 2   # 7.0 m clear < 7.06 m
+    exact = 0.5 * 2 + 7 * 1.134 + 6 * 0.02                            # a width that fits 7 exactly
+    assert layout([[0, 5], [exact, 5], [exact, 0], [0, 0]])["n"] == 7
+    assert layout([[0, 5], [exact - 0.001, 5], [exact - 0.001, 0], [0, 0]])["n"] == 6
+
+
+def test_array_layout_settings_change_the_fill(node_available):
+    land = layout(RECT10x5, {"orient": "landscape"})
+    assert (land["pw"], land["sl"]) == (1.762, 1.134) and land["n"] == 10        # 5 a row, 2 rows
+    flat = layout(RECT10x5, {"tiltDeg": 0})
+    assert flat["rowGap"] == 0.02 and flat["pitch"] == pytest.approx(1.782) and flat["n"] == 14
+    assert layout(RECT10x5, {"setback": 0})["n"] == 16                 # 8 a row, 2 rows
+    assert layout(RECT10x5, {"setback": 2.4})["n"] == 0               # 0.2 m deep left: nothing fits
+    narrow = layout([[0, 10], [1.5, 10], [1.5, 0], [0, 0]])          # deep but 0.5 m clear across: rows tried, none fill
+    assert (narrow["n"], narrow["rows"]) == (0, 0)
+    low = layout([[0, 8.2], [10, 8.2], [10, 0], [0, 0]], {"sunElevDeg": 15})
+    assert low["pitch"] > PITCH and low["rows"] == 2
+    w = layout(RECT10x5, {"module": {"watts": 500}, "sunHours": 4, "derate": 1})
+    assert w["kWp"] == pytest.approx(3.5) and w["kwhDay"] == pytest.approx(14) and w["pw"] == 1.134
+    assert layout([[0, 100], [100, 100], [100, 0], [0, 0]])["n"] == run("B.MAX_PANELS") == 300
+
+
+def test_array_layout_keeps_every_panel_inside_an_l_shaped_roof(node_available):
+    pts = [[0, 0], [12, 0], [12, 8], [6, 8], [6, 4], [0, 4]]       # front edge z = 0, no roof at x < 6, z > 4
+    r = run(f"""(() => {{ const a = B.newArray({json.dumps(pts)}), L = B.arrayLayout(a), sb = 0.5, e = 1e-4;
+        return {{ n: L.n, rows: L.rows,
+                  inside: L.panels.every(([x, z]) => B.rectInPoly(x - L.pw / 2 - sb + e, x + L.pw / 2 + sb - e, z - L.planD / 2 - sb + e, z + L.planD / 2 + sb - e, a.pts)),
+                  room: L.panels.map(p => B.toRoom(a, p)) }}; }})()""")
+    assert r["n"] >= 10 and r["rows"] >= 2 and r["inside"] is True
+    assert all(x > 6 or z < 4 for x, z in r["room"])                   # nothing over the missing corner
+    assert any(x < 6 for x, z in r["room"]) and any(z > 4 for x, z in r["room"])
+
+
+def test_pv_tuned_clamps_and_keeps_the_old_object(node_available):
+    r = run("(() => { const a = B.newArray([[0,0],[4,0],[4,3]]); const b = B.pvTuned(a, {tiltDeg: 60}); return [a.pv, b.pv, b.type, b.id === a.id]; })()")
+    assert r == [{}, {"tiltDeg": 45}, "array", True]
+    assert run("B.pvTuned({pv: {orient: 'landscape'}}, {tiltDeg: -5}).pv") == {"orient": "landscape", "tiltDeg": 0}
+    assert run("B.pvTuned({}, {tiltDeg: 20}).pv") == {"tiltDeg": 20}
+    assert run("B.pvTuned({}, {setback: 0.12345}).pv") == {"setback": 0.12}
+    assert run("B.pvTuned({}, {setback: -1}).pv.setback") == 0 and run("B.pvTuned({}, {setback: 9}).pv.setback") == 3
+    assert run("B.pvTuned({}, {setback: 2.5}).pv.setback") == 2.5
+    assert run("B.pvTuned({}, {orient: 'sideways'}).pv.orient") == "portrait"
+    assert run("B.pvTuned({}, {orient: 'landscape'}).pv.orient") == "landscape"
+    assert run("B.pvTuned({pv: {tiltDeg: 10}}, {setback: 1}).pv") == {"tiltDeg": 10, "setback": 1}
+    assert run("B.pvOf({pv: {tiltDeg: 7, module: {watts: 500}}})") == {
+        "orient": "portrait", "tiltDeg": 7, "setback": 0.5, "sunElevDeg": 25, "colGap": 0.02, "sunHours": 5, "derate": 0.8,
+        "module": {"w": 1.134, "l": 1.762, "watts": 500}}
+    assert run("B.pvOf({}).module") == {"w": 1.134, "l": 1.762, "watts": 440}
+
+
+def span(pts):
+    xs, zs = [p[0] for p in pts], [p[1] for p in pts]
+    return max(xs) - min(xs), max(zs) - min(zs)
+
+
+def test_solar_totals_labels_and_picking(node_available):
+    pre = f"const a = B.newArray({json.dumps(RECT10x5)}), b = B.newArray({json.dumps(RECT10x5)}, {{orient: 'landscape'}}), w = B.newBlock('wall')"
+    t = run("B.solarTotals([a, w, b])", pre)
+    assert (t["arrays"], t["n"]) == (2, 17) and t["kWp"] == pytest.approx(7.48) and t["kwhDay"] == pytest.approx(29.92)
+    assert run("B.solarTotals([w])", pre) == {"arrays": 0, "n": 0, "kWp": 0, "kwhDay": 0}
+    assert run("B.totalsLine(B.solarTotals([a, w, b]))", pre) == "17 panels, 7.48 kWp, about 29.9 kWh/day"
+    assert run("B.totalsLine({n: 1, kWp: 0.44, kwhDay: 1.76})") == "1 panel, 0.44 kWp, about 1.8 kWh/day"
+    assert run("B.sizeLabel(a)", pre) == "7 panels, 3.08 kWp, about 12.3 kWh/day"
+    assert run("B.objectName(a)", pre) == "Solar array"
+    assert run("[B.hitsObject(a, [5, 2.5]), B.hitsObject(a, [9.9, 4.9]), B.hitsObject(a, [11, 2.5])]", pre) == [True, True, False]
+    assert span(run("B.scaledPts({...a, w: 20, d: 10})", pre)) == (pytest.approx(20), pytest.approx(10))
+
+
+def test_array_parts_are_the_sheet_and_three_boxes_a_panel(node_available):
+    a = run(f"B.newArray({json.dumps(RECT10x5)})")
+    ps, L = parts(a), run(f"B.arrayLayout({json.dumps(a)})")
+    assert ps[0]["kind"] == "prism" and ps[0]["h"] == 0.01 and ps[0]["y0"] == 0 and ps[0]["mat"] == "main"
+    assert ps[0]["pts"] == [pytest.approx(p) for p in a["pts"]]
+    assert len(ps) == 1 + 3 * 7
+    t, half = math.radians(15), 1.762 / 2
+    pivot = 0.15 + half * math.sin(t) + 0.035
+    for i, (x, z) in enumerate(L["panels"]):
+        pv, front, rear = ps[1 + 3 * i: 4 + 3 * i]
+        assert pv["mat"] == "pv" and pv["c"] == pytest.approx([x, pivot, z]) and pv["s"] == pytest.approx([1.134, 0.035, 1.762])
+        assert pv["rx"] == pytest.approx(t)
+        assert front["mat"] == rear["mat"] == "main" and "rx" not in front
+        assert front["c"][2] > z > rear["c"][2] and front["s"][1] < rear["s"][1]       # low leg at the front (+z)
+        assert front["c"][1] == pytest.approx(front["s"][1] / 2) and rear["c"][1] == pytest.approx(rear["s"][1] / 2)
+        assert rear["s"][1] - front["s"][1] == pytest.approx(2 * 0.8 * half * math.sin(t))
+        assert front["s"][1] + rear["s"][1] == pytest.approx(2 * pivot)
+        assert front["c"][2] - z == pytest.approx(0.8 * half * math.cos(t)) and z - rear["c"][2] == pytest.approx(0.8 * half * math.cos(t))
+        assert front["s"][0] == pytest.approx(0.9 * 1.134) and rear["s"][2] == front["s"][2] == 0.04 and front["c"][0] == pytest.approx(x)
+    assert len(parts({**a, "pv": {"setback": 2.4}})) == 1
+
+
+def test_arrays_save_open_and_copy_with_their_settings(node_available):
+    pre = (f"const a = B.pvTuned(B.newArray({json.dumps(RECT10x5)}), {{orient: 'landscape', tiltDeg: 10}});"
+           "const d = {...B.emptyDesign(), options: {A: [a], B: [], C: []}};"
+           "const r = B.parseDesign(JSON.parse(JSON.stringify(B.designRecord(d, null))))")
+    got = run("[r.record.options.A[0].pv, r.design.options.A[0].type, B.sizeLabel(r.design.options.A[0]) === B.sizeLabel(a)]", pre)
+    assert got == [{"orient": "landscape", "tiltDeg": 10}, "array", True]
+    c = run("(() => { const c = B.copyOption(d, 'A', 'B'); c.options.B[0].pv.tiltDeg = 30; return [a.pv.tiltDeg, c.options.B[0].pv.tiltDeg, c.options.B[0].id !== a.id]; })()", pre)
+    assert c == [10, 30, True]
+    assert run("'pv' in B.copyOption({...B.emptyDesign(), options: {A: [B.newBlock('wall')], B: [], C: []}}, 'A', 'B').options.B[0]") is False
+
+
+def test_array_edge_cases_the_mutation_check_found(node_available):
+    # newDrawn('array') hands over to newArray (its pv and its local, edge-aligned corners), not the slab path
+    assert run("B.newDrawn('array', [[0, 0], [2, 0], [2, 2]]).pv") == {}
+    # a front edge at 45 degrees: the object turns so both ends of that edge sit on its +z side
+    diag = [[0, 0], [2, 2], [4, 0], [2, -2]]
+    a = run(f"B.newArray({json.dumps(diag)})")
+    assert a["pts"][0][1] == pytest.approx(a["pts"][1][1]) and a["w"] == pytest.approx(math.hypot(2, 2))
+    # resized deeper than wide: depth scales on its own
+    pre = f"const r = B.newArray({json.dumps(RECT10x5)})"
+    assert span(run("B.scaledPts({...r, w: 20, d: 5})", pre)) == (pytest.approx(20), pytest.approx(5))
+    # picking follows the L outline, not its bounding box
+    ell = [[0, 4], [4, 4], [4, 0], [2, 0], [2, 2], [0, 2]]
+    pre = f"const l = B.newArray({json.dumps(ell)})"
+    assert run("[B.hitsObject(l, [3, 1]), B.hitsObject(l, [0.5, 0.5])]", pre) == [True, False]
+    # a T touch (one end on the other segment) is not a crossing
+    assert run("B.segsCross([0,0],[2,0],[1,0],[1,1])") is False
+    # a slot cut in from below crosses only the rect's first (z0) side
+    below = [[-1, -1], [1.5, -1], [1.5, 1], [2.5, 1], [2.5, -1], [5, -1], [5, 3], [-1, 3]]
+    assert run(f"B.rectInPoly(0, 4, 0, 2, {below})") is False
+    assert run(f"B.rectInPoly(0, 4, 1.5, 2, {below})") is True

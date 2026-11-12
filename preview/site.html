@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Site Designer AR</title>
+<title>Solar Site Designer AR</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <script type="importmap">
@@ -67,14 +67,14 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
 </head>
 <body>
 <div class="wrap">
-  <h1>Site designer (Phase 1)</h1>
-  <p class="note">Sketch a design on the real site in AR. Printed AprilTags round the site keep it locked in place from every side, a customer walks round it, flips between options A, B and C, and you save it to reopen or share. Other pages: <a href="tagar.html">tabletop AR</a>, <a href="viewer.html">design viewer</a>, <a href="tags.html">tag check</a>.</p>
+  <h1>Solar site designer (Phase 1)</h1>
+  <p class="note">Stand on the roof, tap its corners, and the panels fill it in AR at full size, with the panel count, kWp and kWh a day. Printed AprilTags keep the panels locked in place while you and the customer walk round. Other pages: <a href="tagar.html">tabletop AR</a>, <a href="viewer.html">design viewer</a>, <a href="tags.html">tag check</a>.</p>
   <div class="card">
     <ol>
-      <li>Print 36h11 tags (<code>scripts/make_tags.py</code>), tape 2 or more on each wall about 1.2-1.5 m up, at least 2 m apart round the site. Each id once.</li>
-      <li>Start AR, aim at the first wall's tags and press <b>Lock</b>. Keep <b>Map</b> on and walk round once: every new tag is added to the map.</li>
-      <li>Aim at the floor so the floor is found, then draw: tap corners for an outline or a wall line, or place blocks from the library.</li>
-      <li>Show: before/after, options A/B/C, size labels, photo and video. Save the design to reopen it locked to the same tags.</li>
+      <li>Print 36h11 tags (<code>scripts/make_tags.py</code>, each id once) and tape 2 or more on a parapet or wall about 1.2-1.5 m up.</li>
+      <li>Start AR, aim at those tags and press <b>Lock</b>. Aim at the roof so it is found.</li>
+      <li><b>Panels</b>: tap the roof corners. The first side you tap is the front edge the panels face (usually south). Tap the first corner again, or <b>Done</b>: the area fills with panels in rows.</li>
+      <li>Tap the array to change portrait or landscape, tilt and the edge setback; the count, kWp and kWh a day update. <b>Show</b> it to the customer, compare options A/B/C, take a photo or video. Saving is optional (to reopen the design later on the same tags).</li>
     </ol>
     <div class="row">
       <label class="f">Tag size (black square, mm)<input id="size" inputmode="decimal" value="160"></label>
@@ -96,22 +96,27 @@ label.f input { font: 500 1rem var(--mono); padding: 8px; border: 1px solid var(
       <button id="b-reset" class="warn">New map</button>
     </div>
     <div class="tools" id="t-draw" hidden>
-      <button id="b-outline">Outline</button>
-      <button id="b-line">Wall line</button>
-      <select id="b-block" aria-label="Add a block">
+      <button id="b-panels">Panels</button>
+      <button id="b-more" aria-pressed="false">More</button>
+      <button id="b-outline" class="more" hidden>Outline</button>
+      <button id="b-line" class="more" hidden>Wall line</button>
+      <select id="b-block" class="more" hidden aria-label="Add a block">
         <option value="">+ Block</option>
       </select>
       <button id="b-done" hidden>Done</button>
       <button id="b-cancel" hidden class="warn">Cancel</button>
     </div>
     <div class="tools" id="t-edit" hidden>
-      <button id="b-left" aria-label="Turn left">⟲</button>
-      <button id="b-right" aria-label="Turn right">⟳</button>
-      <button id="b-drag" aria-pressed="false">Drag: move</button>
-      <button id="b-w-" >W −</button><button id="b-w+">W +</button>
-      <button id="b-h-">H −</button><button id="b-h+">H +</button>
-      <button id="b-d-">D −</button><button id="b-d+">D +</button>
-      <button id="b-mat">Material</button>
+      <button id="b-orient" class="pv">Landscape</button>
+      <button id="b-tilt-" class="pv">Tilt −</button><button id="b-tilt+" class="pv">Tilt +</button>
+      <button id="b-set-" class="pv">Edge −</button><button id="b-set+" class="pv">Edge +</button>
+      <button id="b-left" class="gen" aria-label="Turn left">⟲</button>
+      <button id="b-right" class="gen" aria-label="Turn right">⟳</button>
+      <button id="b-drag" class="gen" aria-pressed="false">Drag: move</button>
+      <button id="b-w-" class="gen">W −</button><button id="b-w+" class="gen">W +</button>
+      <button id="b-h-" class="gen">H −</button><button id="b-h+" class="gen">H +</button>
+      <button id="b-d-" class="gen">D −</button><button id="b-d+" class="gen">D +</button>
+      <button id="b-mat" class="gen">Material</button>
       <button id="b-del" class="warn">Delete</button>
     </div>
     <div class="tools" id="t-show" hidden>
@@ -166,8 +171,8 @@ import { mergeNested } from "./tagcheck.js?v=2";
 import { composite } from "./snap.js?v=2";
 import { grainFor, cameraLookShader, smoothLight, lightProbeOptions, twistDelta } from "./panel.js?v=9";
 import * as TM from "./tagmap.js?v=2";
-import * as B from "./blocks.js?v=2";
-import { materialSet, designGroup, objectMesh, labelSprite, readModel, localBox, sunAndSky } from "./build3d.js?v=2";
+import * as B from "./blocks.js?v=3";
+import { materialSet, designGroup, objectMesh, labelSprite, readModel, localBox, sunAndSky } from "./build3d.js?v=3";
 import { pickModelFiles } from "./model.js?v=4";
 
 const TICK_MS = 250, NEED_SIGHTINGS = 3, REG_GRACE_TICKS = 120, TURN = Math.PI / 12, SIZE_STEP = 0.1, VIDEO_FPS = 10;
@@ -266,6 +271,10 @@ function showSel() {
     if (g) { selBox.box.makeEmpty(); g.updateMatrixWorld(true); const inv = roomRoot.matrixWorld.clone().invert(); g.traverse((m) => { if (m.isMesh) selBox.box.union(new THREE.Box3().setFromObject(m).applyMatrix4(inv)); }); }
   }
   $("t-edit").hidden = !(mode === "draw" && o && !tool);
+  const isArray = !!o && o.type === "array";
+  for (const b of $("t-edit").querySelectorAll(".pv")) b.hidden = !isArray;
+  for (const b of $("t-edit").querySelectorAll(".gen")) b.hidden = isArray;
+  if (isArray) $("b-orient").textContent = B.pvOf(o).orient === "landscape" ? "Portrait" : "Landscape";
   hud();
 }
 // commit a change: undo point + redraw
@@ -317,15 +326,24 @@ function hud(msg) {
     else if (floorY() === null) main = "Aim at the floor so it is found (or press Floor here)";
     else if (tool && tool.kind !== "block") main = toolHint();
     else if (alignStep) main = alignStep.hint;
+    else if (o && o.type === "array") { const pv = B.pvOf(o); main = `${B.sizeLabel(o)} · ${pv.orient}, tilt ${pv.tiltDeg}°, edge ${B.fmtM(pv.setback)}`; }
     else if (o) main = `${B.objectName(o)}: ${B.sizeLabel(o)} · ${B.MATERIALS[o.mat].name}`;
-    else if (mode === "draw") main = "Outline, Wall line or + Block, or tap an object to edit it";
-    else if (mode === "show") main = `${design.names[design.active]}: ${objs().length} object${objs().length === 1 ? "" : "s"}${before ? " (hidden: before)" : ""}`;
-    else main = "Walk round so every tag is mapped, then Draw";
+    else if (mode === "draw") main = solar() || "Panels: tap the roof corners to fill them with panels (More: outline, walls, blocks)";
+    else if (mode === "show") main = `${design.names[design.active]}: ${solar() || `${objs().length} object${objs().length === 1 ? "" : "s"}`}${before ? " (hidden: before)" : ""}`;
+    else main = "Roof found: go to Draw and press Panels";
   }
   $("hud").innerHTML = `${main}<small>${trackLine()}</small>`;
 }
+// the solar total of the option on show, or "" when it has no array
+function solar() { const t = B.solarTotals(objs()); return t.arrays ? `Total ${B.totalsLine(t)}` : ""; }
 function toolHint() {
-  const n = tool.pts.length, name = tool.kind === "slab" ? "outline" : "wall line";
+  const n = tool.pts.length;
+  if (tool.kind === "array") {
+    if (!n) return "Tap the roof corner where the front edge starts (the panels face this edge)";
+    if (n === 1) return "Tap the other end of the front edge";
+    return `${n} corners: tap the next, tap the first to close, or Done`;
+  }
+  const name = tool.kind === "slab" ? "outline" : "wall line";
   if (!n) return `Tap the first corner of the ${name}`;
   return tool.kind === "slab" ? `${n} corner${n === 1 ? "" : "s"}: tap the next, tap the first to close, or Done` : `${n} point${n === 1 ? "" : "s"}: tap the next, Done to finish`;
 }
@@ -334,8 +352,17 @@ function startDraw(kind) { sel = -1; tool = { kind, pts: [] }; $("b-done").hidde
 
 // a finished outline or wall line: pulled up to its default height, then a vertical drag sets the height
 function finishDrawn() {
-  const min = tool.kind === "slab" ? 3 : 2;
+  const min = tool.kind === "walls" ? 2 : 3;
   if (tool.pts.length < min) { hud(`Needs ${min} or more points`); return; }
+  if (tool.kind === "array") {
+    let o;
+    try { o = B.newArray(tool.pts); } catch (e) { hud(e.message); hudMsg = ""; return; }
+    endTool();
+    addObj(o);
+    commit();
+    if (!B.arrayLayout(o).n) { hud("No panel fits: tap the array and make the edge setback smaller, or draw a bigger area"); hudMsg = ""; }
+    return;
+  }
   const o = B.newDrawn(tool.kind, tool.pts);
   endTool();
   addObj(o);
@@ -377,7 +404,7 @@ function tap(cx, cy) {
   if (dragMode === "height" && sel >= 0) { dragMode = "move"; $("b-drag").textContent = "Drag: move"; $("b-drag").setAttribute("aria-pressed", "false"); }
   if (tool && tool.kind !== "block") {
     const pts = tool.pts, q = B.snapPoint(p, pts[pts.length - 1] || null, pts[pts.length - 2] || null);
-    if (tool.kind === "slab" && B.closesOutline(pts, p)) return finishDrawn();
+    if (tool.kind !== "walls" && B.closesOutline(pts, p)) return finishDrawn();
     pts.push(q);
     drawDraft(); hud(); redraw();
     return;
@@ -452,6 +479,18 @@ $("b-undo").onclick = () => {
   if (!s) { hud("Nothing to undo"); hudMsg = ""; return; }
   design = s; sel = -1; rebuild();
 };
+$("b-panels").onclick = () => startDraw("array");
+$("b-more").onclick = () => {
+  const on = $("b-more").getAttribute("aria-pressed") !== "true";
+  $("b-more").setAttribute("aria-pressed", String(on));
+  for (const b of $("t-draw").querySelectorAll(".more")) b.hidden = !on;
+};
+const PV_STEP = { tilt: 5, setback: 0.1 };
+$("b-orient").onclick = edit((o) => B.pvTuned(o, { orient: B.pvOf(o).orient === "landscape" ? "portrait" : "landscape" }));
+$("b-tilt-").onclick = edit((o) => B.pvTuned(o, { tiltDeg: B.pvOf(o).tiltDeg - PV_STEP.tilt }));
+$("b-tilt+").onclick = edit((o) => B.pvTuned(o, { tiltDeg: B.pvOf(o).tiltDeg + PV_STEP.tilt }));
+$("b-set-").onclick = edit((o) => B.pvTuned(o, { setback: B.pvOf(o).setback - PV_STEP.setback }));
+$("b-set+").onclick = edit((o) => B.pvTuned(o, { setback: B.pvOf(o).setback + PV_STEP.setback }));
 $("b-outline").onclick = () => startDraw("slab");
 $("b-line").onclick = () => startDraw("walls");
 for (const [k, b] of Object.entries(B.BLOCKS)) { const o = document.createElement("option"); o.value = k; o.textContent = b.name; $("b-block").appendChild(o); }
@@ -1012,6 +1051,8 @@ window.__site = {
     return { mode, locked: !!wfr, floorY: floorY(), tags: map ? Object.keys(map.tags).map(Number) : [], pending: Object.keys(pending).map(Number),
              fix: lastFix && { used: lastFix.used, rms: +(lastFix.rms * 1000).toFixed(1) }, active: design.active,
              objects: objs().map((o) => ({ type: o.type, x: +o.x.toFixed(3), z: +o.z.toFixed(3), w: +o.w.toFixed(3), h: +o.h.toFixed(3), d: +o.d.toFixed(3), yaw: +o.yaw.toFixed(3), mat: o.mat, label: B.sizeLabel(o) })),
+             solar: (({ arrays, n, kWp, kwhDay }) => ({ arrays, n, kWp: +kWp.toFixed(3), kwhDay: +kwhDay.toFixed(2) }))(B.solarTotals(objs())),
+             pv: objs().map((o) => (o.type === "array" ? B.pvOf(o) : null)),
              counts: B.OPTIONS.map((k) => design.options[k].length), sel, tool: tool && { kind: tool.kind, n: tool.pts ? tool.pts.length : 0 }, dragMode, labels, before,
              undo: hist.stack.length, hud: $("hud").textContent };
   },

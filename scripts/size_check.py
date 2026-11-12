@@ -21,14 +21,14 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-NAMES = {"walls": "Wall line", "slab": "Outline"}
+NAMES = {"walls": "Wall line", "slab": "Outline", "array": "Solar array"}
 
 
 def scaled_pts(o: dict) -> list[list[float]]:
     """A drawn object's points after resizing (same rule as blocks.js scaledPts)."""
     base = o.get("base") or {}
     sx = o["w"] / base["w"] if base.get("w", 0) > 1e-6 else 1.0
-    sz = o["d"] / base["d"] if o["type"] == "slab" and base.get("d", 0) > 1e-6 else sx
+    sz = o["d"] / base["d"] if o["type"] in ("slab", "array") and base.get("d", 0) > 1e-6 else sx
     return [[x * sx, z * (sx if o["type"] == "walls" else sz)] for x, z in o["pts"]]
 
 

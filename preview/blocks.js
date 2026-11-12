@@ -1,5 +1,6 @@
-// Architect's design on site (site.html): parametric blocks, drawn outlines and wall lines, materials,
-// snapping, size labels, undo, design options A/B/C, the design file, and model-to-site alignment.
+// The design on site (site.html): solar arrays laid out inside tapped roof corners (the main tool), plus
+// parametric blocks, drawn outlines and wall lines, materials, snapping, size labels, undo, design options
+// A/B/C, the design file, and model-to-site alignment.
 // Pure, no three.js: build3d.js turns the parts into meshes.
 //
 // Everything is in room metres (tagmap.js room frame: y up, floor at y = 0 once the floor is known).
@@ -31,8 +32,10 @@ export const BLOCKS = {
   bench:   { name: "Bench",       w: 1.6,   h: 0.45, d: 0.42,  y: 0,   mat: "wood" },
   panel:   { name: "Solar panel", w: 1.038, h: 0.6,  d: 1.755, y: 0,   mat: "metal", tiltDeg: 15 },
 };
-// drawn shapes: a closed floor outline pulled up into a solid, and a wall line pulled up into walls
-export const DRAWN = { slab: { name: "Outline", mat: "concrete", h: 0.15 }, walls: { name: "Wall line", mat: "plaster", h: 2.4, d: 0.12 } };
+// drawn shapes: a closed floor outline pulled up into a solid, a wall line pulled up into walls, and a solar
+// array (a roof area filled with panels in rows)
+export const DRAWN = { slab: { name: "Outline", mat: "concrete", h: 0.15 }, walls: { name: "Wall line", mat: "plaster", h: 2.4, d: 0.12 },
+                       array: { name: "Solar array", mat: "metal", h: 0.01 } };
 export const LIMITS = { min: 0.02, max: 30 };
 const clampLen = (v, lo = LIMITS.min, hi = LIMITS.max) => Math.min(hi, Math.max(lo, v));
 
@@ -49,6 +52,7 @@ export function newBlock(type, x = 0, z = 0, yaw = 0) {
 // A drawn shape from room points pts [[x, z], ...]: kind "slab" (closed outline) or "walls" (open line).
 // The points are kept relative to their centre, which becomes the object's (x, z).
 export function newDrawn(kind, pts, h = DRAWN[kind].h) {
+  if (kind === "array") return newArray(pts);
   if (kind === "slab" && pts.length < 3) throw new Error("an outline needs 3 or more corners");
   if (kind === "walls" && pts.length < 2) throw new Error("a wall line needs 2 or more points");
   const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length, cz = pts.reduce((s, p) => s + p[1], 0) / pts.length;
@@ -67,7 +71,7 @@ export function bounds2(pts) {
 // A drawn shape's points at its current size: resizing stretches the outline from its centre.
 export function scaledPts(o) {
   if (!o.pts) return null;
-  const sx = o.base && o.base.w > 1e-6 ? o.w / o.base.w : 1, sz = o.type === "slab" && o.base && o.base.d > 1e-6 ? o.d / o.base.d : sx;
+  const sx = o.base && o.base.w > 1e-6 ? o.w / o.base.w : 1, sz = (o.type === "slab" || o.type === "array") && o.base && o.base.d > 1e-6 ? o.d / o.base.d : sx;
   return o.pts.map(([x, z]) => [x * sx, z * (o.type === "walls" ? sx : sz)]);
 }
 
@@ -132,6 +136,18 @@ export function blockParts(o) {
     case "slab":
       P.push({ kind: "prism", pts: scaledPts(o), y0: 0, h, mat: "main" });
       break;
+    case "array": {
+      // the roof area as a thin sheet, then each panel tilted on a front and a rear leg (facing +z)
+      P.push({ kind: "prism", pts: scaledPts(o), y0: 0, h: 0.01, mat: "main" });
+      const L = arrayLayout(o), t = L.tilt, half = L.sl / 2, lift = 0.15;
+      const pivot = lift + half * Math.sin(t) + 0.035;            // the front edge clears the roof by lift
+      const leg = 0.8 * half, yf = pivot - leg * Math.sin(t), yr = pivot + leg * Math.sin(t);
+      for (const [x, z] of L.panels) {
+        P.push(box([x, pivot, z], [L.pw, 0.035, L.sl], "pv", { rx: t }));
+        P.push(box([x, yf / 2, z + leg * Math.cos(t)], [0.9 * L.pw, yf, 0.04]), box([x, yr / 2, z - leg * Math.cos(t)], [0.9 * L.pw, yr, 0.04]));
+      }
+      break;
+    }
     case "walls": {
       const pts = scaledPts(o);
       for (let i = 0; i + 1 < pts.length; i++) {
@@ -160,7 +176,7 @@ export function toRoom(o, [lx, lz]) {
 // Does the floor point p fall on the object's footprint (plus slop metres)?
 export function hitsObject(o, p, slop = 0.05) {
   const [lx, lz] = toLocal(o, p);
-  if (o.type === "slab") return pointInPoly([lx, lz], scaledPts(o)) || polyDist([lx, lz], scaledPts(o), true) < slop;
+  if (o.type === "slab" || o.type === "array") return pointInPoly([lx, lz], scaledPts(o)) || polyDist([lx, lz], scaledPts(o), true) < slop;
   if (o.type === "walls") return polyDist([lx, lz], scaledPts(o), false) < o.d / 2 + slop;
   return Math.abs(lx) <= o.w / 2 + slop && Math.abs(lz) <= Math.max(o.d, 0.1) / 2 + slop;
 }
@@ -215,6 +231,7 @@ export const turned = (o, da) => ({ ...o, yaw: o.yaw + da });
 // Labels: "2.40 m", and per object what a customer reads off it.
 export const fmtM = (v) => `${v.toFixed(2)} m`;
 export function sizeLabel(o) {
+  if (o.type === "array") return totalsLine(arrayLayout(o));
   if (o.type === "walls") return `${fmtM(polyLength(scaledPts(o)))} of wall, ${fmtM(o.h)} high`;
   if (o.type === "slab") return `${fmtM(o.w)} × ${fmtM(o.d)}, ${polyArea(scaledPts(o)).toFixed(1)} m², ${fmtM(o.h)} high`;
   if (o.type === "wall") return `${fmtM(o.w)} long, ${fmtM(o.h)} high`;
@@ -238,10 +255,10 @@ export const DESIGN_KIND = "arvr-site-design", DESIGN_VERSION = 1;
 export const emptyDesign = () => ({ options: { A: [], B: [], C: [] }, active: "A", names: { A: "Option A", B: "Option B", C: "Option C" } });
 // copy option `from` over option `to` (fresh ids, so the copies are separate objects)
 export function copyOption(design, from, to) {
-  return { ...design, options: { ...design.options, [to]: design.options[from].map((o) => ({ ...o, id: newId(), pts: o.pts && o.pts.map((p) => [...p]) })) } };
+  return { ...design, options: { ...design.options, [to]: design.options[from].map((o) => ({ ...o, id: newId(), pts: o.pts && o.pts.map((p) => [...p]), ...(o.pv && { pv: { ...o.pv } }) })) } };
 }
 
-const OBJ_KEYS = ["id", "type", "x", "z", "y", "yaw", "w", "h", "d", "mat", "pts", "base"];
+const OBJ_KEYS = ["id", "type", "x", "z", "y", "yaw", "w", "h", "d", "mat", "pts", "base", "pv"];
 const round = (v) => (typeof v === "number" ? Math.round(v * 1e4) / 1e4 : Array.isArray(v) ? v.map(round) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, round(x)])) : v);
 export function designRecord(design, map, extra = {}) {
   const options = {};
@@ -264,6 +281,83 @@ export function parseDesign(src) {
   return { design: { options, active: OPTIONS.includes(r.active) ? r.active : "A", names: { ...emptyDesign().names, ...(r.names || {}) } }, map: r.map || null, record: r };
 }
 export const designFileName = (d = new Date()) => `site-design-${d.toISOString().slice(0, 16).replace(/[:T]/g, "-")}.json`;
+
+// ---------- solar arrays ----------
+// Panel defaults: a 440 W module (1134 x 1762 mm) in portrait, tilted 15 degrees, rows spaced so the row in
+// front does not shade the next when the sun is sunElevDeg high, setback metres clear of the roof edge.
+// Energy: kWh/day = kWp x sunHours (peak sun hours a day) x derate (losses), as panel.js energy() does.
+export const PV = { orient: "portrait", tiltDeg: 15, setback: 0.5, sunElevDeg: 25, colGap: 0.02, sunHours: 5, derate: 0.8,
+                    module: { w: 1.134, l: 1.762, watts: 440 } };
+export const MAX_PANELS = 300;
+export const pvOf = (o) => ({ ...PV, ...(o.pv || {}), module: { ...PV.module, ...((o.pv && o.pv.module) || {}) } });
+
+// A solar array from room corners pts [[x, z], ...] (3 or more, in order round the roof). The first side
+// (pts[0] -> pts[1]) is the front edge: the panels face it and the rows run along it. The object is turned
+// so its x runs along that edge and the edge is on its +z side.
+export function newArray(pts, pv = {}) {
+  if (pts.length < 3) throw new Error("a solar array needs 3 or more roof corners");
+  const ex = pts[1][0] - pts[0][0], ez = pts[1][1] - pts[0][1];
+  if (Math.hypot(ex, ez) < 0.05) throw new Error("the front edge is too short: tap its two ends apart");
+  const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length, cz = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+  const o = { id: newId(), type: "array", x: cx, z: cz, y: 0, yaw: Math.atan2(-ez, ex), mat: DRAWN.array.mat, pv: { ...pv } };
+  if (toLocal(o, pts[0])[1] < 0) o.yaw += Math.PI;               // the front edge goes on the +z side
+  o.pts = pts.map((p) => toLocal(o, p));
+  const b = bounds2(o.pts);
+  return { ...o, w: b.w, h: DRAWN.array.h, d: b.d, base: { w: b.w, d: b.d } };
+}
+
+// Do segments a-b and c-d cross (properly, not just touch)?
+const cross = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+export const segsCross = (a, b, c, d) => cross(a, b, c) * cross(a, b, d) < 0 && cross(c, d, a) * cross(c, d, b) < 0;
+// Does the rectangle [x0, x1] x [z0, z1] lie inside the polygon (corners inside, no polygon side crossing it)?
+export function rectInPoly(x0, x1, z0, z1, pts) {
+  const r = [[x0, z0], [x1, z0], [x1, z1], [x0, z1]];
+  if (!r.every((p) => pointInPoly(p, pts))) return false;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    for (let k = 0; k < 4; k++) if (segsCross(a, b, r[k], r[(k + 1) % 4])) return false;
+  }
+  return true;
+}
+
+// The panels of array o, in its own frame: centres [x, z] of each panel's plan, row by row from the front
+// edge back. Each panel is pw wide along the row and sl long up its slope (planD deep in plan); rows are
+// pitch apart. A panel goes where its plan, grown by the setback, fits inside the roof corners.
+export function arrayLayout(o) {
+  const pv = pvOf(o), pts = scaledPts(o), b = bounds2(pts), t = (pv.tiltDeg * Math.PI) / 180;
+  const portrait = pv.orient !== "landscape", pw = portrait ? pv.module.w : pv.module.l, sl = portrait ? pv.module.l : pv.module.w;
+  const planD = sl * Math.cos(t), rise = sl * Math.sin(t);
+  const rowGap = rise > 1e-6 ? rise / Math.tan((pv.sunElevDeg * Math.PI) / 180) : pv.colGap;
+  const pitch = planD + rowGap, sb = pv.setback, eps = 1e-6, step = 0.01, panels = [];
+  let rows = 0;
+  for (let zc = b.maxZ - sb - planD / 2; zc - planD / 2 >= b.minZ + sb - eps && panels.length < MAX_PANELS; zc -= pitch) {
+    const before = panels.length;
+    for (let u = b.minX + sb; u + pw <= b.maxX - sb + eps && panels.length < MAX_PANELS;) {
+      if (rectInPoly(u - sb + eps, u + pw + sb - eps, zc - planD / 2 - sb + eps, zc + planD / 2 + sb - eps, pts)) {
+        panels.push([u + pw / 2, zc]);
+        u += pw + pv.colGap;
+      } else u += step;
+    }
+    if (panels.length > before) rows++;
+  }
+  const n = panels.length, kWp = (n * pv.module.watts) / 1000;
+  return { panels, n, rows, pw, sl, planD, pitch, rowGap, tilt: t, kWp, kwhDay: kWp * pv.sunHours * pv.derate };
+}
+// The panel settings changed (orient, tiltDeg, setback ...), kept in range: a new object, for undo.
+export function pvTuned(o, ch) {
+  const pv = { ...(o.pv || {}), ...ch };
+  if (pv.tiltDeg !== undefined) pv.tiltDeg = Math.min(45, Math.max(0, pv.tiltDeg));
+  if (pv.setback !== undefined) pv.setback = Math.min(3, Math.max(0, Math.round(pv.setback * 100) / 100));
+  if (pv.orient !== undefined && pv.orient !== "landscape") pv.orient = "portrait";
+  return { ...o, pv };
+}
+// Every array of one option added up: panels, kWp, kWh a day.
+export function solarTotals(objs) {
+  let n = 0, kWp = 0, kwhDay = 0, arrays = 0;
+  for (const o of objs) if (o.type === "array") { const L = arrayLayout(o); arrays++; n += L.n; kWp += L.kWp; kwhDay += L.kwhDay; }
+  return { arrays, n, kWp, kwhDay };
+}
+export const totalsLine = (t) => `${t.n} panel${t.n === 1 ? "" : "s"}, ${t.kWp.toFixed(2)} kWp, about ${t.kwhDay.toFixed(1)} kWh/day`;
 
 // ---------- lining an imported model up with the site ----------
 // Model points m1, m2 and the real points r1, r2 they belong on (each [x, y, z]; m in model metres, r in

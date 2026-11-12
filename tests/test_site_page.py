@@ -34,7 +34,8 @@ def test_every_button_the_hooks_click_exists_once():
     ids = ["b-lock", "b-map", "b-floor", "b-reset", "b-outline", "b-line", "b-done", "b-cancel", "b-left", "b-right",
            "b-drag", "b-w-", "b-w+", "b-h-", "b-h+", "b-mat", "b-del", "b-before", "b-A", "b-B", "b-C", "b-copy",
            "b-labels", "b-photo", "b-video", "b-save", "b-open-btn", "b-open", "b-glb", "b-import", "b-model",
-           "b-align", "b-tape", "b-check", "b-undo", "b-exit"]
+           "b-align", "b-tape", "b-check", "b-undo", "b-exit", "b-panels", "b-more", "b-orient", "b-tilt-",
+           "b-tilt+", "b-set-", "b-set+"]
     for i in ids:
         assert len(re.findall(rf'id="{re.escape(i)}"', SITE)) == 1, i
 
@@ -313,5 +314,118 @@ def test_viewer_shows_the_sample_and_switches_options(browser):
     for k in ("A", "B", "C"):
         if sample["options"].get(k):
             assert pg.evaluate(f"() => window.__viewer.option('{k}')")["objects"] == len(sample["options"][k])
+    assert errors == []
+    pg.close()
+
+
+# ---------- solar arrays (the main tool) ----------
+
+ROOF = [[-1.8, 2.8], [1.8, 2.8], [1.8, -0.6], [-1.8, -0.6]]      # front edge first: 3.6 x 3.4 m, 2 panels at 0.5 m setback
+SMALL = [[-1.2, 2.6], [1.2, 2.6], [1.2, 0.2], [-1.2, 0.2]]      # 2.4 x 2.4 m: too shallow for a row at 0.5 m
+
+
+def draw_array(pg, pts):
+    S(pg, "setMode('draw')")
+    hints = [S(pg, "startDraw('array')")["hud"]]
+    for p in pts:
+        hints.append(S(pg, "tapRoom(a)", p)["hud"])
+    return S(pg, "finish()"), hints
+
+
+def visible(pg, *ids):
+    return pg.evaluate("(ids) => ids.map((i) => !document.getElementById(i).hidden)", list(ids))
+
+
+def test_panels_fill_the_tapped_roof_and_show_the_totals(site):
+    assert visible(site, "b-panels", "b-more", "b-outline", "b-line", "b-block") == [True, True, False, False, False]
+    st, hints = draw_array(site, ROOF)
+    assert hints[0].startswith("Tap the roof corner where the front edge starts")
+    assert hints[1].startswith("Tap the other end of the front edge")
+    assert hints[2].startswith("2 corners: tap the next") and hints[4].startswith("4 corners")
+    assert st["tool"] is None and st["sel"] == 0 and len(st["objects"]) == 1
+    o = st["objects"][0]
+    assert o["type"] == "array" and o["w"] == pytest.approx(3.6, abs=0.06) and o["d"] == pytest.approx(3.4, abs=0.06)
+    assert (o["x"], o["z"]) == (pytest.approx(0, abs=0.05), pytest.approx(1.1, abs=0.05))
+    assert st["solar"] == {"arrays": 1, "n": 2, "kWp": 0.88, "kwhDay": 3.52}
+    assert o["label"] == "2 panels, 0.88 kWp, about 3.5 kWh/day" and st["hud"].startswith(o["label"] + " · portrait, tilt 15°, edge 0.50 m")
+    assert visible(site, "b-orient", "b-tilt-", "b-set+", "b-w+", "b-mat", "b-left") == [True, True, True, False, False, False]
+    assert S(site, "select(-1)")["hud"].startswith("Total 2 panels, 0.88 kWp")
+    assert S(site, "setMode('show')")["hud"].startswith("Option A: Total 2 panels, 0.88 kWp, about 3.5 kWh/day")
+    S(site, "setMode('draw')")
+    assert S(site, "addBlock('bench', 0, 1)")["sel"] == 1
+    assert visible(site, "b-orient", "b-set-", "b-w+", "b-mat") == [False, False, True, True]   # a block keeps its own buttons
+    assert site.errors == []
+
+
+def test_array_buttons_change_the_fill_and_undo_steps_back(site):
+    st, _ = draw_array(site, SMALL)
+    assert st["solar"]["n"] == 0 and st["hud"].startswith("No panel fits: tap the array and make the edge setback smaller")
+    for _ in range(5):
+        st = S(site, "click('b-set-')")
+    assert st["pv"][0]["setback"] == 0 and st["solar"]["n"] == 2
+    assert S(site, "click('b-set-')")["pv"][0]["setback"] == 0                    # clamped at the edge
+    assert S(site, "click('b-set+')")["pv"][0]["setback"] == pytest.approx(0.1)
+    assert S(site, "click('b-tilt+')")["pv"][0]["tiltDeg"] == 20
+    assert S(site, "click('b-tilt-')")["pv"][0]["tiltDeg"] == 15
+    assert site.evaluate("() => document.getElementById('b-orient').textContent") == "Landscape"
+    st = S(site, "click('b-orient')")
+    assert st["pv"][0]["orient"] == "landscape" and st["solar"]["n"] == 1         # 2.2 m clear: one 1.76 m wide panel
+    assert site.evaluate("() => document.getElementById('b-orient').textContent") == "Portrait"
+    assert "landscape, tilt 15°, edge 0.10 m" in st["hud"]
+    assert S(site, "undo()")["pv"][0]["orient"] == "portrait"
+    assert S(site, "undo()")["pv"][0]["tiltDeg"] == 20
+
+
+def test_panels_need_three_corners_and_more_shows_the_other_tools(site):
+    S(site, "setMode('draw')")
+    S(site, "startDraw('array')")
+    S(site, "tapRoom(a)", ROOF[0])
+    S(site, "tapRoom(a)", ROOF[1])
+    st = S(site, "finish()")
+    assert st["objects"] == [] and st["tool"] == {"kind": "array", "n": 2} and st["hud"].startswith("Needs 3 or more points")
+    S(site, "click('b-cancel')")
+    assert S(site, "click('b-panels')")["tool"] == {"kind": "array", "n": 0}
+    S(site, "click('b-cancel')")
+    st = S(site, "click('b-more')")
+    assert visible(site, "b-outline", "b-line", "b-block") == [True, True, True]
+    assert site.evaluate("() => document.getElementById('b-more').getAttribute('aria-pressed')") == "true"
+    S(site, "click('b-more')")
+    assert visible(site, "b-outline", "b-line", "b-block") == [False, False, False]
+    assert site.evaluate("() => document.getElementById('b-more').getAttribute('aria-pressed')") == "false"
+
+
+def test_a_tap_on_the_first_corner_closes_the_array(site):
+    S(site, "setMode('draw')")
+    S(site, "startDraw('array')")
+    for p in ROOF + [ROOF[0]]:
+        st = S(site, "tapRoom(a)", p)
+    assert st["tool"] is None and [o["type"] for o in st["objects"]] == ["array"] and st["solar"]["n"] == 2
+
+
+def test_arrays_save_and_reopen_with_their_settings(site):
+    draw_array(site, ROOF)
+    S(site, "click('b-orient')")
+    rec = S(site, "record()")
+    assert rec["options"]["A"][0]["type"] == "array" and rec["options"]["A"][0]["pv"] == {"orient": "landscape"}
+    S(site, f"open({json.dumps(EMPTY)})")
+    assert S(site, "state()")["solar"]["arrays"] == 0
+    S(site, "open(a)", json.dumps(rec))
+    st = S(site, "state()")
+    assert st["pv"][0]["orient"] == "landscape" and st["solar"]["arrays"] == 1
+
+
+def test_viewer_shows_the_solar_totals_of_a_design(browser, site):
+    draw_array(site, ROOF)
+    rec = S(site, "record()")
+    b, base = browser
+    pg = new_page(b)
+    errors = []
+    pg.on("pageerror", lambda e: errors.append(str(e)))
+    pg.goto(f"{base}/viewer.html")
+    pg.wait_for_function("window.__viewer && window.__viewer.state().objects > 0", timeout=30000)
+    pg.set_input_files("#file", files=[{"name": "roof.json", "mimeType": "application/json", "buffer": json.dumps(rec).encode()}])
+    pg.wait_for_function("window.__viewer.state().name === 'roof.json'", timeout=10000)
+    st = pg.evaluate("() => window.__viewer.state()")
+    assert st["objects"] == 1 and st["info"].startswith("Option A: 2 panels, 0.88 kWp, about 3.5 kWh/day")
     assert errors == []
     pg.close()

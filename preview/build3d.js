@@ -5,7 +5,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { ColladaLoader } from "three/addons/loaders/ColladaLoader.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { MTLLoader } from "three/addons/loaders/MTLLoader.js";
-import { MATERIALS, blockParts, sizeLabel, objectName } from "./blocks.js?v=2";
+import { MATERIALS, blockParts, sizeLabel, objectName } from "./blocks.js?v=3";
 import { modelKind, baseName, objFileUnits, fileUnits, guessUnits, UNIT_M, seat } from "./model.js?v=4";
 
 // One three.js material per finish, made once; wrap(m) adds a page's shader tweaks (the camera look).

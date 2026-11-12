@@ -51,8 +51,8 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
-import * as B from "./blocks.js?v=2";
-import { materialSet, designGroup, sunAndSky } from "./build3d.js?v=2";
+import * as B from "./blocks.js?v=3";
+import { materialSet, designGroup, sunAndSky } from "./build3d.js?v=3";
 
 const $ = (id) => document.getElementById(id);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -118,7 +118,7 @@ function show(refit = false) {
   if (refit) frame(content.children.length ? content : tagsRoot);
   const objs = design ? design.options[opt] : [];
   $("info").textContent = glb ? `${name}: a GLB model` :
-    design ? `${design.names[opt]}: ${objs.length} object${objs.length === 1 ? "" : "s"}${before ? " (hidden: the site as it is)" : ""}${map ? ` · ${Object.keys(map.tags).length} tags mapped` : ""} · drag to turn, pinch to zoom` : "";
+    design ? `${design.names[opt]}: ${B.solarTotals(objs).arrays ? B.totalsLine(B.solarTotals(objs)) : `${objs.length} object${objs.length === 1 ? "" : "s"}`}${before ? " (hidden: the site as it is)" : ""}${map ? ` · ${Object.keys(map.tags).length} tags mapped` : ""} · drag to turn, pinch to zoom` : "";
 }
 function openDesign(text, fileName) {
   const r = B.parseDesign(text);

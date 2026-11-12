@@ -36,6 +36,12 @@ def test_scaled_pts_slab_uses_its_own_depth_ratio():
     assert S.scaled_pts(o) == [[-2, -0.5], [2, 0.5]]
 
 
+def test_scaled_pts_solar_array_uses_its_own_depth_ratio_and_has_a_name():
+    o = {"type": "array", "w": 4, "d": 1, "pts": [[-1, -1], [1, 1]], "base": {"w": 2, "d": 2}}
+    assert S.scaled_pts(o) == [[-2, -0.5], [2, 0.5]]
+    assert S.NAMES["array"] == "Solar array"
+
+
 def test_scaled_pts_without_base_or_tiny_base_is_unscaled():
     assert S.scaled_pts({"type": "walls", "w": 5, "pts": [[1, 2]]}) == [[1, 2]]
     assert S.scaled_pts({"type": "walls", "w": 5, "pts": [[1, 2]], "base": {"w": 1e-9}}) == [[1, 2]]
@@ -160,6 +166,7 @@ def js_length(o):
     wall([[-2, 1.7], [-2, -1.3], [2, -1.3], [2, 1.7]], w=5.2, base_w=4),
     wall([[0, 0], [1, 1]], w=1, base_w=1),
     {"id": "s", "type": "slab", "w": 3, "d": 2, "pts": [[-1, -1], [1, -1], [1, 1]], "base": {"w": 2, "d": 2}},
+    {"id": "a", "type": "array", "w": 3, "d": 2, "pts": [[-1, -1], [1, -1], [1, 1]], "base": {"w": 2, "d": 2}},
 ])
 def test_length_matches_blocks_js(node_available, o):
     assert S.main_length(o) == pytest.approx(js_length(o), abs=1e-9)
