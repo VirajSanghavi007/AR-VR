@@ -25,8 +25,8 @@ def buttons(html):
 def test_phase1_leads_with_the_site_designer():
     b = buttons(read("phase1.html"))
     assert b[0] == ("btn", "site.html", "Open the Site Designer"), b
-    assert [c for c, _, _ in b[1:]] == ["btn ghost"] * 3, b                  # everything else is secondary
-    assert {h for _, h, _ in b[1:]} == {"tagar.html", "viewer.html", "tags.html"}, b
+    assert [c for c, _, _ in b[1:]] == ["btn ghost"] * 4, b                  # everything else is secondary
+    assert {h for _, h, _ in b[1:]} == {"tagar.html", "panels.html", "viewer.html", "tags.html"}, b
     assert ("btn ghost", "tagar.html", "Quick table demo") in b
 
 
@@ -51,7 +51,7 @@ def test_index_puts_the_site_designer_first():
     html = read("index.html")
     tools = html.split("Straight to the tools:", 1)[1].split("</p>", 1)[0]
     hrefs = re.findall(r'href="([^"]+)"', tools)
-    assert hrefs[:4] == ["site.html", "viewer.html", "tagar.html", "tags.html"], hrefs
+    assert hrefs[:5] == ["site.html", "viewer.html", "tagar.html", "panels.html", "tags.html"], hrefs
 
 
 def test_every_local_link_on_the_phase_pages_exists():

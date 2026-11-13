@@ -296,7 +296,7 @@ export function chooseTags(markers, max = 4) {
   const dup = [...seen].filter(([, l]) => l.length > 1).map(([id]) => id);
   if (dup.length) return { ok: false, found: markers.length, why: `id ${dup.join(", ")} seen twice: every tag needs its own id` };
   if (markers.length < 2)
-    return { ok: false, found: markers.length, why: markers.length ? "1 tag in view: it takes 2, 3 or 4" : "No tags in view" };
+    return { ok: false, found: markers.length, why: markers.length ? `1 tag in view: it takes ${max > 4 ? `2 to ${max}` : "2, 3 or 4"}` : "No tags in view" };
   const tags = markers.sort((a, b) => area2(b.corners) - area2(a.corners)).slice(0, max).sort((a, b) => a.id - b.id);
   return { ok: true, found: tags.length, tags };
 }

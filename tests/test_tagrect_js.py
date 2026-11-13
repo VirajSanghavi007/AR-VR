@@ -255,7 +255,7 @@ def test_pages_detect_at_every_scale():
     for f in PREVIEW.glob("*.*"):
         if f.suffix in (".html", ".js"):
             versions |= set(re.findall(r"tagrect\.js\?v=(\d+)", f.read_text(encoding="utf-8")))
-    assert versions == {"8"}
+    assert versions == {"9"}
 
 
 def sq(i, x=0, size=1):
